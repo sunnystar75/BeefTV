@@ -15,8 +15,16 @@
 // 不发 [DONE]、只留着连接或重复终态帧；若把终态当成进展，空闲计时会被一直续上，
 // Durable wait 不返回，界面就停在「处理中」。终态只开一段短宽限，宽限内没有新文本
 // 或工具参数就结束本次流，让官方解析器收尾。
+//
+// 思考字段和纯空白也不是回答进展。enterprise.beefapi.com 是 new-api 网关，
+// deepseek-v4.1-flash / gemini-3.8-flash / glm-5.3 会在计费后持续推
+// reasoning_content（或只有空白的 content），连接不关、也不给 finish_reason / [DONE]。
+// 界面只转发 text_delta，若把这些片段当成进展，95 秒空闲和回合停滞回退都会被续上。
+// 回答文本或工具参数才顺延空闲计时。另有一个不随增量重置的截止时间，避免
+// 看起来像回答的心跳一直占着这一次流。
 export const DEFAULT_MODEL_STREAM_IDLE_MS = 95000;
 export const DEFAULT_STREAM_TERMINAL_GRACE_MS = 5000;
+export const DEFAULT_MODEL_STREAM_DEADLINE_MS = 20 * 60 * 1000;
 
 function protocolFor(input, options) {
   try {
@@ -32,6 +40,12 @@ function protocolFor(input, options) {
   return null;
 }
 const text = value => typeof value === 'string' && value.length > 0;
+// Zero-width and ordinary whitespace are not answer text. new-api keepalives use them.
+const answerText = value => {
+  if (typeof value === 'string') return value.replace(/[\s\u200b\u200c\u200d\ufeff\u2060]/g, '').length > 0;
+  if (!Array.isArray(value)) return false;
+  return value.some(part => typeof part === 'string' ? answerText(part) : part && typeof part === 'object' && (answerText(part.text) || answerText(part.content) || answerText(part.refusal)));
+};
 function combine(progress, terminal) {
   if (progress && terminal) return 'progress-terminal';
   if (progress) return 'progress';
@@ -39,16 +53,17 @@ function combine(progress, terminal) {
   return 'ignore';
 }
 function completionKind(event) {
-  let progress = false, terminal = false;
+  let progress = false, reasoning = false, terminal = false;
   for (const choice of Array.isArray(event.choices) ? event.choices : []) {
     if (!choice || typeof choice !== 'object') continue;
     const delta = choice.delta || {};
     const tools = Array.isArray(delta.tool_calls) ? delta.tool_calls : [];
-    if (text(delta.content) || text(delta.reasoning_content) || text(delta.reasoning) || text(delta.reasoning_text) ||
-      tools.some(tool => tool && (text(tool.id) || text(tool.function?.name) || text(tool.function?.arguments)))) progress = true;
+    if (answerText(delta.content) || tools.some(tool => tool && (answerText(tool.id) || answerText(tool.function?.name) || answerText(tool.function?.arguments) || answerText(tool.custom?.name) || answerText(tool.custom?.input)))) progress = true;
+    else if (answerText(delta.reasoning_content) || answerText(delta.reasoning) || answerText(delta.reasoning_text)) reasoning = true;
     if (choice.finish_reason) terminal = true;
   }
-  return combine(progress, terminal);
+  if (progress || terminal) return combine(progress, terminal);
+  return reasoning ? 'reasoning' : 'ignore';
 }
 function responsesKind(event) {
   if (['response.completed', 'response.failed', 'response.incomplete'].includes(event.type)) return 'terminal';
@@ -105,11 +120,12 @@ function observer(protocol, onKind) {
   };
 }
 
-export async function fetchModelWithProgressIdle(input, options = {}, {fetch: transport = globalThis.fetch, timeoutMs = DEFAULT_MODEL_STREAM_IDLE_MS, graceMs = DEFAULT_STREAM_TERMINAL_GRACE_MS, onActivity} = {}) {
+export async function fetchModelWithProgressIdle(input, options = {}, {fetch: transport = globalThis.fetch, timeoutMs = DEFAULT_MODEL_STREAM_IDLE_MS, graceMs = DEFAULT_STREAM_TERMINAL_GRACE_MS, deadlineMs = DEFAULT_MODEL_STREAM_DEADLINE_MS, onActivity} = {}) {
   const protocol = protocolFor(input, options);
   if (!protocol) return transport(input, options);
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Invalid model stream idle timeout');
   if (!Number.isFinite(graceMs) || graceMs < 0) throw new Error('Invalid model stream terminal grace');
+  if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) throw new Error('Invalid model stream deadline');
   const local = new AbortController();
   const signals = [options.signal, input instanceof Request ? input.signal : null].filter(Boolean);
   const caller = signals.length ? AbortSignal.any(signals) : null;
@@ -117,8 +133,8 @@ export async function fetchModelWithProgressIdle(input, options = {}, {fetch: tr
   // stream:true responses are watched even when the proxy omits text/event-stream.
   // A body that finishes is forwarded unchanged; only a body that never ends is cut.
   if (!response.ok || !response.body) return response;
-  const reader = response.body.getReader(); let timer, grace, graceArmed = false, finished = false, controller;
-  const cleanup = () => { clearTimeout(timer); clearTimeout(grace); caller?.removeEventListener('abort', onAbort); };
+  const reader = response.body.getReader(); let timer, grace, deadline, graceArmed = false, finished = false, controller;
+  const cleanup = () => { clearTimeout(timer); clearTimeout(grace); clearTimeout(deadline); caller?.removeEventListener('abort', onAbort); };
   const terminate = error => {
     if (finished) return;
     finished = true; cleanup(); controller.error(error);
@@ -141,9 +157,16 @@ export async function fetchModelWithProgressIdle(input, options = {}, {fetch: tr
   const armGrace = () => {
     // Repeated finish_reason or [DONE] must not keep postponing the close.
     if (graceArmed) return;
-    graceArmed = true; clearTimeout(timer); clearTimeout(grace);
+    graceArmed = true; clearTimeout(timer); clearTimeout(deadline); clearTimeout(grace);
     grace = setTimeout(() => complete(), graceMs);
     grace.unref?.();
+  };
+  // Answer text and tool arguments reset the idle timer. Reasoning-only and
+  // whitespace do not. The deadline never moves, so a drip of new-looking
+  // bytes still ends the body.
+  const armDeadline = () => {
+    deadline = setTimeout(() => terminate(new Error(`Model stream deadline: no text or tool progress remained unfinished for ${deadlineMs} ms`)), deadlineMs);
+    deadline.unref?.();
   };
   const observe = observer(protocol, kind => {
     if (kind === 'progress') arm();
@@ -151,7 +174,7 @@ export async function fetchModelWithProgressIdle(input, options = {}, {fetch: tr
     else if (kind === 'terminal') armGrace();
   });
   const body = new ReadableStream({
-    start(value) { controller = value; caller?.addEventListener('abort', onAbort, {once: true}); if (caller?.aborted) onAbort(); else arm(); },
+    start(value) { controller = value; caller?.addEventListener('abort', onAbort, {once: true}); if (caller?.aborted) onAbort(); else { arm(); armDeadline(); } },
     async pull() {
       try {
         const next = await reader.read(); if (finished) return;
