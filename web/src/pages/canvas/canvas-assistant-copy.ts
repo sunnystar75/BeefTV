@@ -141,17 +141,29 @@ export const ASSISTANT_STARTER_PROMPTS = [
     "检查哪些镜头还缺参考图",
 ];
 
+/** 长时间没有正文时，把「处理中」换成这句，避免看起来像界面卡住。 */
+export const ASSISTANT_QUIET_AFTER_MS = 8000;
+export const ASSISTANT_QUIET_NOTICE = "模型仍在响应，完成后会显示在这里。";
+
+function assistantToolActivity(toolName: string | undefined): string {
+    const name = String(toolName || "").trim().replaceAll("_", ".");
+    if (name === "media.overview") return "正在浏览素材，确认画面和声音。";
+    if (name === "media.inspect") return "正在查看和听取选定片段。";
+    if (name === "media.check") return "正在检查黑屏、音轨和文件信息。";
+    if (name.startsWith("canvas.")) return "正在查看或修改画布。";
+    if (name.startsWith("skill.")) return "正在读取技能说明。";
+    if (!name) return "正在执行操作。";
+    return `正在执行 ${name}。`;
+}
+
 /** 官方压缩/重试进度：只说现在在做什么，不提内部事件名。 */
-export function assistantLifecycleText(event: { phase: AgentLifecycleEvent["phase"] | "tool" | "tool_end"; toolName?: string } | string | null | undefined): string | null {
+export function assistantLifecycleText(event: { phase: AgentLifecycleEvent["phase"] | "tool" | "tool_end" | "waiting"; toolName?: string } | string | null | undefined): string | null {
     const phase = typeof event === "string" ? event : event?.phase;
     switch (phase) {
-        case "tool": {
-            const tool = typeof event === "string" ? undefined : event?.toolName;
-            if (tool === "media_overview" || tool === "media.overview") return "正在浏览素材，确认画面和声音。";
-            if (tool === "media_inspect" || tool === "media.inspect") return "正在查看和听取选定片段。";
-            if (tool === "media_check" || tool === "media.check") return "正在检查黑屏、音轨和文件信息。";
-            return null;
-        }
+        case "tool":
+            return assistantToolActivity(typeof event === "string" ? undefined : event?.toolName);
+        case "waiting":
+            return ASSISTANT_QUIET_NOTICE;
         case "compaction":
             return "正在整理对话内容，方便继续。";
         case "retry":
@@ -161,9 +173,16 @@ export function assistantLifecycleText(event: { phase: AgentLifecycleEvent["phas
     }
 }
 
+/** 有正文时不再占一行状态；有工具进度时优先显示工具，否则在安静一段时间后说明仍在等模型。 */
+export function assistantStreamingNotice(lifecycleNotice: string | null | undefined, streamed: string | null | undefined, quiet: boolean): string | null {
+    if (lifecycleNotice) return lifecycleNotice;
+    if (assistantVisibleReply(streamed || "")) return null;
+    return quiet ? ASSISTANT_QUIET_NOTICE : "助手正在处理…";
+}
+
 /** 这里只提供继续对话入口，不重发原请求，也不保证后台任务已恢复。 */
 export function assistantTurnCanContinue(reason: string | null | undefined): boolean {
-    return ["turn_timeout", "turn_interrupted", "turn_request_budget_exhausted", "turn_tool_step_budget_exhausted", "model_request_failed", "model_error", "provider_error"].includes(reason || "");
+    return ["turn_timeout", "tool_timeout", "turn_interrupted", "turn_request_budget_exhausted", "turn_tool_step_budget_exhausted", "model_request_failed", "model_error", "provider_error"].includes(reason || "");
 }
 
 export const ASSISTANT_CONTINUE_PROMPT = "继续完成上一条要求。先检查当前画布和已经完成的操作，保留已有结果；不要重复创建节点或重新提交已开始的生成任务。";

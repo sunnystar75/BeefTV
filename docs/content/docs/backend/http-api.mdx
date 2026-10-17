@@ -118,6 +118,7 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 宿主对模型请求与工具步骤各自有单轮上限（`BEEFTV_AGENT_MAX_REQUESTS_PER_TURN`、
 `BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN`），按轮独立计数、下一轮从零开始；总预算
 `BEEFTV_AGENT_TOTAL_REQUEST_BUDGET` 默认关闭，只有显式配置才启用。
+模型流约 95 秒没有新的文本或工具进展时，这一轮以 `turn_end.errorReason = turn_timeout` 结束；单次工具步骤超过时限时为 `tool_timeout`。兼容服务若在 `finish_reason` 之后不发送 `[DONE]` 并保持连接，宿主会在短宽限后结束这次流并结算回合，界面因此退出「处理中」。长时间没有正文增量时，界面会说明仍在等待模型或当前工具。
 
 ### 外部客户端连接
 

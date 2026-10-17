@@ -13,7 +13,7 @@ import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 import { getActiveUserScope, getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
 import { attachmentFromCanvasReference, attachmentRangeError, readAssistantInputDraft, saveAssistantInputDraft, uploadAssistantAttachment } from "@/services/assistant-attachments";
 import { CanvasAssistantAttachments } from "./canvas-assistant-attachments";
-import { ASSISTANT_CONTINUE_PROMPT, ASSISTANT_STARTER_PROMPTS, assistantSkillLabel, assistantStatusNotice, assistantVisibleReply } from "./canvas-assistant-copy";
+import { ASSISTANT_CONTINUE_PROMPT, ASSISTANT_QUIET_AFTER_MS, ASSISTANT_STARTER_PROMPTS, assistantSkillLabel, assistantStatusNotice, assistantStreamingNotice, assistantVisibleReply } from "./canvas-assistant-copy";
 import { CanvasAssistantComposer } from "./canvas-assistant-composer";
 import { CanvasAssistantReply, CanvasAssistantTurnView, CanvasAssistantUserMessage } from "./canvas-assistant-turn";
 import { ASSISTANT_MAX_WIDTH, ASSISTANT_MIN_WIDTH, type CanvasAssistantController } from "./use-canvas-assistant";
@@ -120,11 +120,21 @@ export function CanvasAssistantSidebar(props: Props) {
         setSelectionAttached(true);
     }, [selectedNodeIds.join(",")]);
 
+    const [modelQuiet, setModelQuiet] = useState(false);
+    useEffect(() => {
+        if (!assistant.streaming || assistant.lifecycleNotice || assistantVisibleReply(assistant.streamed || "")) {
+            setModelQuiet(false);
+            return;
+        }
+        const timer = window.setTimeout(() => setModelQuiet(true), ASSISTANT_QUIET_AFTER_MS);
+        return () => window.clearTimeout(timer);
+    }, [assistant.streaming, assistant.streamed, assistant.lifecycleNotice]);
+    const streamingNotice = assistantStreamingNotice(assistant.lifecycleNotice, assistant.streamed, modelQuiet);
     const turnCount = assistant.turns.length;
     useLayoutEffect(() => {
         const node = logRef.current;
         if (node && followLatestRef.current) node.scrollTop = node.scrollHeight;
-    }, [turnCount, assistant.streamed, assistant.pendingUserText, assistant.lifecycleNotice, props.proposalFeedback]);
+    }, [turnCount, assistant.streamed, assistant.pendingUserText, assistant.lifecycleNotice, streamingNotice, props.proposalFeedback]);
 
     const notice = assistant.status && !assistant.status.available && assistant.status.reason !== "host_starting" ? assistantStatusNotice(assistant.status.reason) : null;
     const inputReady = draftLoaded && loadedDraftIdentity === draftIdentity;
@@ -233,8 +243,8 @@ export function CanvasAssistantSidebar(props: Props) {
                             <p className="canvas-assistant-meta" role="status">{item.status === "accepted" ? "助手已收到补充要求。" : item.status === "sending" ? "正在发送补充要求…" : "未能确认收到补充要求。请查看最新回复后再决定是否发送。"}</p>
                         </div>)}
                         {assistantVisibleReply(assistant.streamed || "") ? <CanvasAssistantReply text={assistant.streamed} /> : null}
-                        {assistant.streaming && (assistant.lifecycleNotice || !assistantVisibleReply(assistant.streamed || "")) ? (
-                            <p className="canvas-assistant-meta">{assistant.lifecycleNotice || "助手正在处理…"}</p>
+                        {assistant.streaming && streamingNotice ? (
+                            <p className="canvas-assistant-meta" role="status">{streamingNotice}</p>
                         ) : null}
                     </div>
                 ) : null}

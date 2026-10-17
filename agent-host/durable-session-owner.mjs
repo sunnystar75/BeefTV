@@ -13,6 +13,7 @@ import { newTurnAccumulator, resetTurnAccumulator, turnChange, sessionTitle } fr
 import { SYSTEM_PROMPT } from './system-prompt.mjs';
 import { SKILL_LOAD_PARAMETERS, createSkillCatalogSection, expandSkillContent, loadPinnedSkills, loadedSkillRecord,
   normalizeSkillCatalog, sameSkillPin, skillsToLoad } from './skill-resource.mjs';
+import { DEFAULT_MODEL_STREAM_IDLE_MS } from './model-stream-idle.mjs';
 
 // On-disk format tag written into manifests and host state since 1.0.4; not the
 // package version. Changing it rejects every existing session as mismatched.
@@ -45,6 +46,31 @@ export function publicDurableTurn(active, running = false) {
   if (running) { delete result.toolCalls; result.status = 'running'; }
   return result;
 }
+export const DEFAULT_TOOL_DEADLINE_MS = 35000;
+export const DEFAULT_MEDIA_TOOL_DEADLINE_MS = 100000;
+const TURN_TIMEOUT_MESSAGE = '模型流长时间没有新的文本或工具进展，已停止这一轮。';
+const TOOL_TIMEOUT_MESSAGE = '工具步骤超时，已停止这一轮。';
+function positiveMs(value, fallback) {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+// Official retries can spend one idle window each, then sleep up to 60s.
+// The backstop is longer than that, so a retry still gets to settle itself.
+export function turnStallBudget(streamIdleMs = DEFAULT_MODEL_STREAM_IDLE_MS) {
+  return streamIdleMs * 3 + 120000;
+}
+export function withDeadline(promise, ms, onTimeout) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => { try { reject(onTimeout()); } catch (error) { reject(error); } }, ms);
+    timer.unref?.();
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+export function assistantStallTimeout(assistant, settled) {
+  const blob = `${assistant?.errorMessage || ''}\n${settled?.detail || ''}\n${settled?.reason || ''}`;
+  if (/stream idle timeout|no text or tool progress/i.test(blob)) return { reason: 'turn_timeout', message: TURN_TIMEOUT_MESSAGE };
+  return null;
+}
 export function durableCompletion(settled, assistant, budgetFailure, stopped = false) {
   const cancelled = Boolean(stopped || settled.reason === 'aborted');
   const text = assistant?.content?.filter((block) => block.type === 'text').map((block) => block.text).join('') || '';
@@ -60,12 +86,30 @@ export function durableCompletion(settled, assistant, budgetFailure, stopped = f
 
 export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModels, getModelRef,
   buildTools, authorizeTurn, completeTurn = async () => {}, runWithBudget = (_entry, fn) => fn(),
-  extensions = () => [], settings = {}, skills = null, thinkingLevel = agentThinkingLevel() }) {
+  extensions = () => [], settings = {}, skills = null, thinkingLevel = agentThinkingLevel(), timeouts = {} }) {
   if (!THINKING_LEVELS.includes(thinkingLevel)) throw fail('invalid_thinking_level');
   if (typeof authorizeTurn !== 'function') throw fail('durable_authorizer_required');
   const sessions = new Map();
   const locks = new Map();
   let closed = false;
+  const streamIdleMs = positiveMs(timeouts.streamIdleMs, DEFAULT_MODEL_STREAM_IDLE_MS);
+  const toolMs = positiveMs(timeouts.toolMs, DEFAULT_TOOL_DEADLINE_MS);
+  const mediaToolMs = positiveMs(timeouts.mediaToolMs, DEFAULT_MEDIA_TOOL_DEADLINE_MS);
+  const stallMs = positiveMs(timeouts.stallMs, turnStallBudget(streamIdleMs));
+  const forceAfterMs = positiveMs(timeouts.forceAfterMs, 2000);
+  const stallPollMs = positiveMs(timeouts.pollMs, 100);
+  function noteTimeout(entry, timeout) {
+    if (entry.generation.timeout || entry.generation.aborted) return;
+    entry.generation.timeout = timeout;
+    entry.generation.aborted = true;
+    void entry.root?.abort(CTX).catch(() => {});
+  }
+  function toolTimeoutError(entry) {
+    if (entry.generation.aborted || entry.generation.timeout) return fail('aborted');
+    const error = Object.assign(new Error(TOOL_TIMEOUT_MESSAGE), { reason: 'tool_timeout' });
+    noteTimeout(entry, { reason: 'tool_timeout', message: error.message });
+    return error;
+  }
   const directory = (canvasId) => path.join(sessionRoot, canvasKey(canvasId));
   const durableDirectory = (canvasId) => path.join(directory(canvasId), 'durable');
   const currentPath = (canvasId) => path.join(directory(canvasId), 'current.json');
@@ -211,12 +255,19 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         if (entry.generation.aborted) throw fail('aborted');
         if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
         if (entry.generation.pendingInput?.state === 'pending') throw fail('supplement_preparation_pending');
-        await authorization(entry, entry.turn.turnId);
+        const deadlineMs = String(tool.label || '').startsWith('media.') ? mediaToolMs : toolMs;
+        entry.generation.toolBusyUntil = Date.now() + deadlineMs;
         try {
-          // Bridge tools return {content}; Durable's ToolExecutionResult names it output.
-          const { content, ...result } = await runWithBudget(entry, () => tool.execute(String(api.taskId), args, context.abortSignal));
-          return { ...result, output: content };
-        } finally { await persistEffects(entry); }
+          return await withDeadline((async () => {
+            await authorization(entry, entry.turn.turnId);
+            // Bridge tools return {content}; Durable's ToolExecutionResult names it output.
+            const { content, ...result } = await runWithBudget(entry, () => tool.execute(String(api.taskId), args, context.abortSignal));
+            return { ...result, output: content };
+          })(), deadlineMs, () => toolTimeoutError(entry));
+        } finally {
+          entry.generation.toolBusyUntil = 0;
+          await persistEffects(entry);
+        }
       },
     }));
     entry.toolNames = tools.map((tool) => tool.name);
@@ -369,7 +420,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         entry.turn.canvasId=entry.canvasId;
         entry.turn.supplements = [];
         entry.log.length = 0;
-        entry.generation = Object.assign(entry.generation, { aborted: false, intentEpoch: 0, modelEpoch: 0, pendingInput: null, pendingInputError: null });
+        entry.generation = Object.assign(entry.generation, { aborted: false, intentEpoch: 0, modelEpoch: 0, pendingInput: null, pendingInputError: null, timeout: null, forcedSettle: false, toolBusyUntil: 0, lastModelActivity: 0, lastProgressAt: 0 });
         const expansion = await expandSelectedSkills(entry, existing, input.skills, input.content, input.turnId);
         await update(entry, (doc) => {
           // content stays the client's own input (idempotency and history);
@@ -491,50 +542,85 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   async function wait(entry, submission, { onEvent = () => {}, signal } = {}) {
     const context = signal ? withAbortSignal(signal, CTX) : CTX;
     const stream = await watchEvents(entry.harness, entry.root.id, context);
-    await onEvent({ type: 'snapshot', ...stream.snapshot, sessionId: entry.sessionId });
-    stream.start(async (events) => { for (const event of events) await onEvent(event); });
+    const touch = () => { entry.generation.lastProgressAt = Date.now(); };
+    const forward = async (event) => { touch(); await onEvent(event); };
+    await forward({ type: 'snapshot', ...stream.snapshot, sessionId: entry.sessionId });
+    stream.start(async (events) => { for (const event of events) await forward(event); });
+    const stallStarted = Date.now();
+    const stallTimer = setInterval(() => {
+      if (entry.generation.timeout || entry.generation.aborted) return;
+      if (entry.generation.toolBusyUntil && Date.now() < entry.generation.toolBusyUntil) return;
+      const last = Math.max(stallStarted, entry.generation.lastModelActivity || 0, entry.generation.lastProgressAt || 0);
+      if (Date.now() - last >= stallMs) noteTimeout(entry, { reason: 'turn_timeout', message: TURN_TIMEOUT_MESSAGE });
+    }, stallPollMs);
+    stallTimer.unref?.();
+    let stopForce = () => {};
+    const forced = new Promise((resolve) => {
+      let force;
+      const timer = setInterval(() => {
+        if (!entry.generation.timeout) return;
+        clearInterval(timer);
+        force = setTimeout(() => resolve({ forced: true, timeout: entry.generation.timeout }), forceAfterMs);
+        force.unref?.();
+      }, stallPollMs);
+      timer.unref?.();
+      stopForce = () => { clearInterval(timer); clearTimeout(force); };
+    });
     try {
-      const original = await submission.wait(context);
-      for (;;) {
-        // Never hold the canvas admission lock while waiting for image prep or
-        // official generations: supplement() needs that lock to admit inputs.
-        const pending = entry.generation.pendingInput;
-        if (pending?.state === 'pending') await pending.promise.catch(() => {});
-        const snapshot = await state(entry);
-        if (!snapshot.active) return snapshot.turns.find((turn) => turn.submissionId === submission.id) || null;
-        const ids = [...(snapshot.active.supplementIds || [])];
-        let settled = original;
-        for (const id of ids) {
-          const admitted = await entry.harness.commit((tx) => tx.submissionByRequest(entry.root.id, `supplement:${id}`), CTX);
-          if (!admitted) {
-            // The host persists supplemental metadata before official admission.
-            // A stop in that exact gap must not admit it during cancellation or
-            // recovery. The fenced turn can settle using existing official work.
-            if (snapshot.active.stopped || entry.generation.aborted) continue;
-            throw fail('supplement_submission_missing');
-          }
-          const supplemental = await entry.harness.submission(admitted.id, CTX);
-          settled = await supplemental.wait(context);
+      const official = waitOfficial(entry, submission, context).then(
+        (record) => ({ forced: false, record }),
+        (error) => ({ forced: false, error }),
+      );
+      const winner = await Promise.race([official, forced]);
+      if (winner.error) throw winner.error;
+      if (!winner.forced) return winner.record;
+      entry.generation.forcedSettle = true;
+      return await forceTimeoutRecord(entry, winner.timeout);
+    } finally {
+      clearInterval(stallTimer); stopForce(); await stream.stop();
+    }
+  }
+  async function waitOfficial(entry, submission, context) {
+    const original = await submission.wait(context);
+    for (;;) {
+      // Never hold the canvas admission lock while waiting for image prep or
+      // official generations: supplement() needs that lock to admit inputs.
+      const pending = entry.generation.pendingInput;
+      if (pending?.state === 'pending') await pending.promise.catch(() => {});
+      const snapshot = await state(entry);
+      if (!snapshot.active) return snapshot.turns.find((turn) => turn.submissionId === submission.id) || null;
+      const ids = [...(snapshot.active.supplementIds || [])];
+      let settled = original;
+      for (const id of ids) {
+        const admitted = await entry.harness.commit((tx) => tx.submissionByRequest(entry.root.id, `supplement:${id}`), CTX);
+        if (!admitted) {
+          // The host persists supplemental metadata before official admission.
+          // A stop in that exact gap must not admit it during cancellation or
+          // recovery. The fenced turn can settle using existing official work.
+          if (snapshot.active.stopped || entry.generation.aborted) continue;
+          throw fail('supplement_submission_missing');
         }
-        const result = await lock(entry.canvasId, async () => {
-          const current = await state(entry);
-          if (!current.active) return { done: true, record: current.turns.find((turn) => turn.submissionId === submission.id) || null };
-          if (entry.generation.pendingInput?.state === 'pending' || JSON.stringify(current.active.supplementIds || []) !== JSON.stringify(ids)) return { done: false };
-          entry.completing = true;
-          try {
-            const active = current.active;
-            const record = active.result || await completionRecord(entry, active, settled);
-            await update(entry, (doc) => { if (doc.active?.requestId === active.requestId) doc.active.result = record; });
-            // Retain active.result until Go acknowledges. Recovery can retry
-            // that completion without scheduling any more model work.
-            await completeTurn({ canvasId: entry.canvasId, turnId: active.turnId, sessionId: entry.sessionId, record });
-            await settleLocal(entry, active, record);
-            return { done: true, record };
-          } finally { entry.completing = false; }
-        });
-        if (result.done) return result.record;
+        const supplemental = await entry.harness.submission(admitted.id, CTX);
+        settled = await supplemental.wait(context);
       }
-    } finally { await stream.stop(); }
+      const result = await lock(entry.canvasId, async () => {
+        const current = await state(entry);
+        if (!current.active) return { done: true, record: current.turns.find((turn) => turn.submissionId === submission.id) || null };
+        if (entry.generation.pendingInput?.state === 'pending' || JSON.stringify(current.active.supplementIds || []) !== JSON.stringify(ids)) return { done: false };
+        entry.completing = true;
+        try {
+          const active = current.active;
+          const record = active.result || await completionRecord(entry, active, settled);
+          await update(entry, (doc) => { if (doc.active?.requestId === active.requestId) doc.active.result = record; });
+          // Retain active.result until Go acknowledges. Recovery can retry
+          // that completion without scheduling any more model work.
+          await completeTurn({ canvasId: entry.canvasId, turnId: active.turnId, sessionId: entry.sessionId, record });
+          await settleLocal(entry, active, record);
+          return { done: true, record };
+        } finally { entry.completing = false; }
+      });
+      if (result.done) return result.record;
+    }
   }
   async function completionRecord(entry, active, settled) {
     // The official settlement points at its exact answer entry. Never take the
@@ -555,10 +641,38 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       }
     }
     const preparationError = entry.generation.pendingInputError;
-    const completion = preparationError ? { reply: assistant?.content?.filter(block => block.type === 'text').map(block => block.text).join('') || '', cancelled: false, error: preparationError.message, errorReason: preparationError.reason } : durableCompletion(settled, assistant, entry.budget?.failure, active.stopped);
+    const replyText = assistant?.content?.filter(block => block.type === 'text').map(block => block.text).join('') || '';
+    const official = preparationError
+      ? { reply: replyText, cancelled: false, error: preparationError.message, errorReason: preparationError.reason }
+      : durableCompletion(settled, assistant, entry.budget?.failure, active.stopped);
+    const clean = !official.error && !official.cancelled && settled.status === 'done';
+    const override = preparationError ? null : (entry.generation.timeout || (!clean && !active.stopped ? assistantStallTimeout(assistant, settled) : null));
+    const completion = override
+      ? { reply: official.reply || replyText, cancelled: false, error: override.message, errorReason: override.reason }
+      : official;
     return { ...publicDurableTurn(active), ...completion,
       toolCalls: [...entry.log], change: turnChange(entry.turn), proposals: [...entry.turn.proposals],
       status: settled.status, sessionId: entry.sessionId };
+  }
+  async function forceTimeoutRecord(entry, timeout) {
+    return lock(entry.canvasId, async () => {
+      const snapshot = await state(entry);
+      const active = snapshot.active;
+      if (!active) return snapshot.turns.at(-1) || null;
+      if (active.result) return active.result;
+      const reason = timeout?.reason || 'turn_timeout';
+      const record = { ...publicDurableTurn(active), reply: '', cancelled: false,
+        error: timeout?.message || (reason === 'tool_timeout' ? TOOL_TIMEOUT_MESSAGE : TURN_TIMEOUT_MESSAGE),
+        errorReason: reason, toolCalls: [...entry.log], change: turnChange(entry.turn), proposals: [...entry.turn.proposals],
+        status: 'error', sessionId: entry.sessionId };
+      entry.completing = true;
+      try {
+        await update(entry, (doc) => { if (doc.active?.requestId === active.requestId) doc.active.result = record; });
+        await completeTurn({ canvasId: entry.canvasId, turnId: active.turnId, sessionId: entry.sessionId, record });
+        await settleLocal(entry, active, record);
+        return record;
+      } finally { entry.completing = false; }
+    });
   }
   async function settleLocal(entry, active, record) {
     await update(entry, (doc) => {

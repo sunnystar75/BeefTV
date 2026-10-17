@@ -7,6 +7,7 @@ import {
     assistantChangeSummary,
     assistantChangedNodeIds,
     assistantLifecycleText,
+    assistantStreamingNotice,
     assistantTurnCanContinue,
     assistantFailedActionText,
     assistantProposalText,
@@ -183,7 +184,9 @@ describe("官方生命周期进度", () => {
         expect(assistantLifecycleText({ phase: "tool", toolName: "media_overview" })).toBe("正在浏览素材，确认画面和声音。");
         expect(assistantLifecycleText({ phase: "tool", toolName: "media_inspect" })).toBe("正在查看和听取选定片段。");
         expect(assistantLifecycleText({ phase: "tool", toolName: "media_check" })).toBe("正在检查黑屏、音轨和文件信息。");
-        expect(assistantLifecycleText({ phase: "tool", toolName: "unknown_tool" })).toBeNull();
+        expect(assistantLifecycleText({ phase: "tool", toolName: "unknown_tool" })).toBe("正在执行 unknown.tool。");
+        expect(assistantLifecycleText({ phase: "tool", toolName: "canvas_get" })).toBe("正在查看或修改画布。");
+        expect(assistantLifecycleText({ phase: "waiting" })).toBe("模型仍在响应，完成后会显示在这里。");
         expect(assistantLifecycleText({ phase: "tool_end", toolName: "media_check" })).toBeNull();
     });
     test("压缩和重试各用一句完整的话，结束事件不再显示进度", () => {
@@ -194,11 +197,17 @@ describe("官方生命周期进度", () => {
         expect(assistantLifecycleText({ phase: "compaction" })).not.toContain("compaction");
         expect(assistantLifecycleText({ phase: "retry" })).not.toContain("retry");
     });
+    test("没有正文时先显示处理中，安静之后说明仍在等模型；有正文则不再占状态行", () => {
+        expect(assistantStreamingNotice(null, "", false)).toBe("助手正在处理…");
+        expect(assistantStreamingNotice(null, "", true)).toBe("模型仍在响应，完成后会显示在这里。");
+        expect(assistantStreamingNotice("正在查看或修改画布。", "", true)).toBe("正在查看或修改画布。");
+        expect(assistantStreamingNotice(null, "已经写好的回复", true)).toBeNull();
+    });
 });
 
 describe("中断后继续的范围", () => {
     test("阶段中断和模型响应失败提供继续要求入口，永久配置问题不重试", () => {
-        for (const reason of ["turn_timeout", "turn_interrupted", "model_request_failed", "turn_request_budget_exhausted", "turn_tool_step_budget_exhausted"]) {
+        for (const reason of ["turn_timeout", "tool_timeout", "turn_interrupted", "model_request_failed", "turn_request_budget_exhausted", "turn_tool_step_budget_exhausted"]) {
             expect(assistantTurnCanContinue(reason)).toBe(true);
         }
         for (const reason of ["request_budget_exhausted", "request_budget_storage_unavailable", "forbidden", "credential_missing", undefined]) {

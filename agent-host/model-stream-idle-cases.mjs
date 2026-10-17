@@ -8,7 +8,7 @@ import {ModelRuntime} from '@earendil-works/pi-coding-agent';
 import {createModels} from '@earendil-works/pi-ai/models';
 import {BACKGROUND_CONTEXT} from '@earendil-works/chord/context';
 import {createDurableSessionStore} from './durable-session-owner.mjs';
-import {fetchModelWithProgressIdle, DEFAULT_MODEL_STREAM_IDLE_MS} from './model-stream-idle.mjs';
+import {fetchModelWithProgressIdle, classifyModelStreamEvent, DEFAULT_MODEL_STREAM_IDLE_MS, DEFAULT_STREAM_TERMINAL_GRACE_MS} from './model-stream-idle.mjs';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const event = data => `data: ${JSON.stringify(data)}\n\n`;
 async function fixture(t, run, contentType = 'text/event-stream') {
@@ -80,9 +80,44 @@ test('Stop aborts promptly; consumer cancellation closes transport without idle 
   caller.abort(new DOMException('User Stop','AbortError'));const result=await reading;assert.equal(result.error.name,'AbortError');
   const response=await fetchModelWithProgressIdle(f.url+req.path,request().options,{timeoutMs:200});await response.body.cancel();await delay(240);assert.equal(f.closed(),2);
 });
-for(const [path,body,type] of [['/models/gemini:streamGenerateContent',{stream:true,messages:[]},'text/event-stream'],['/chat/completions',{stream:false,messages:[]},'text/event-stream'],['/chat/completions',{stream:true,messages:[]},'application/json']]) test(`unsupported ${path}/${type}/${body.stream} passes through`,async t=>{
+for(const [path,body,type] of [['/models/gemini:streamGenerateContent',{stream:true,messages:[]},'text/event-stream'],['/chat/completions',{stream:false,messages:[]},'text/event-stream']]) test(`unsupported ${path}/${type}/${body.stream} passes through`,async t=>{
   const f=await fixture(t,res=>setTimeout(()=>res.end('unchanged'),80),type);
   const result=await read(await fetchModelWithProgressIdle(f.url+path,request(path,body).options,{timeoutMs:20}));assert(!result.error);assert.equal(result.text,'unchanged');
+});
+test('finish_reason is terminal, not progress that can keep a silent body alive', () => {
+  assert.equal(DEFAULT_STREAM_TERMINAL_GRACE_MS, 5000);
+  assert.equal(classifyModelStreamEvent('completions', JSON.stringify({choices:[{delta:{},finish_reason:'stop'}]})), 'terminal');
+  assert.equal(classifyModelStreamEvent('completions', JSON.stringify({choices:[{delta:{content:'答案'},finish_reason:'stop'}]})), 'progress-terminal');
+  assert.equal(classifyModelStreamEvent('completions', JSON.stringify({choices:[{delta:{content:''}}]})), 'ignore');
+  assert.equal(classifyModelStreamEvent('completions', '[DONE]'), 'terminal');
+});
+test('finish_reason without [DONE] completes despite pings and repeated terminal frames', async t => {
+  const done = event({choices:[{delta:{},finish_reason:'stop'}]});
+  const f = await fixture(t, res => {
+    res.write(event({choices:[{delta:{content:'partial answer'}}]}));
+    res.write(done);
+    const timer = setInterval(() => res.write(': ping\n\n' + done), 15);
+    res.on('close', () => clearInterval(timer));
+  });
+  const started = Date.now();
+  const result = await read(await fetchModelWithProgressIdle(f.url + '/chat/completions', request().options, {timeoutMs: 2000, graceMs: 80}));
+  assert.equal(result.error, undefined);
+  assert(result.text.includes('partial answer'));
+  assert(result.text.includes('finish_reason'));
+  assert(Date.now() - started < 500);
+  await delay(40);
+  assert.equal(f.closed(), 1);
+});
+test('stream:true JSON content type is still idle-limited when the body never ends', async t => {
+  const f = await fixture(t, res => { res.write('{"partial":true'); }, 'application/json');
+  const result = await read(await fetchModelWithProgressIdle(f.url + '/chat/completions', request().options, {timeoutMs: 80, graceMs: 1000}));
+  assert.match(result.error.message, /stream idle timeout/);
+});
+test('stream:true JSON that finishes is forwarded unchanged', async t => {
+  const f = await fixture(t, res => { res.end('{"ok":true}'); }, 'application/json');
+  const result = await read(await fetchModelWithProgressIdle(f.url + '/chat/completions', request().options, {timeoutMs: 200, graceMs: 50}));
+  assert.equal(result.error, undefined);
+  assert.equal(result.text, '{"ok":true}');
 });
 test('official Durable retries idle body with partial retained, one completed tool and SQLite history reopen', {timeout:20000}, async t=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'beeftv-model-idle-'));let calls=0;const toolIds=[];let store;
@@ -110,4 +145,74 @@ test('official Durable retries idle body with partial retained, one completed to
   const view=await entry.root.context(BACKGROUND_CONTEXT);const errors=view.entries.flatMap(item=>item.model||[]).filter(message=>message.role==='assistant'&&message.stopReason==='error');
   assert(errors.some(message=>JSON.stringify(message.content).includes('retained current partial')&&/idle timeout/.test(message.errorMessage)));
   const sessionId=entry.sessionId;await store.disposeAll();store=makeStore();const history=await store.history('canvas',sessionId);assert.equal(history.turns[0].reply,record.reply);assert.equal(calls,3);assert.equal(toolIds.length,1);
+});
+function settle(promise, ms, label) {
+  return Promise.race([promise, delay(ms).then(() => { throw new Error(label); })]);
+}
+test('durable wait settles a finish_reason stream that never sends DONE', {timeout:20000}, async t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'beeftv-finish-reason-'));let calls=0;let store;
+  const server=http.createServer(async(req,res)=>{
+    req.resume();calls++;
+    res.writeHead(200,{'content-type':'text/event-stream'});
+    const frame=(delta,finish_reason=null)=>res.write(event({id:'fixture',object:'chat.completion.chunk',created:1,model:'fixture',choices:[{index:0,delta,finish_reason}]}));
+    frame({role:'assistant',content:'visible answer'});
+    frame({},'stop');
+    const timer=setInterval(()=>res.write(': ping\n\n'+event({choices:[{delta:{},finish_reason:'stop'}]})),20);
+    res.on('close',()=>clearInterval(timer));
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const realFetch=globalThis.fetch;
+  globalThis.fetch=(input,options)=>fetchModelWithProgressIdle(input,options,{fetch:realFetch,timeoutMs:5000,graceMs:80});
+  t.after(async()=>{globalThis.fetch=realFetch;await store?.disposeAll();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));fs.rmSync(directory,{recursive:true,force:true});});
+  const runtime=await ModelRuntime.create({authPath:path.join(directory,'auth.json'),modelsPath:null,refreshOnCreate:false});
+  runtime.registerProvider('fixture',{api:'openai-completions',apiKey:'fixture',baseUrl:`http://127.0.0.1:${server.address().port}/v1`,models:[{id:'fixture',name:'fixture',reasoning:false,input:['text'],contextWindow:200000,maxTokens:1024,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}}]});
+  const models=createModels();models.setProvider(runtime.getProvider('fixture'));
+  store=createDurableSessionStore({sessionRoot:path.join(directory,'sessions'),workspaceRoot:path.join(directory,'workspace'),getModels:()=>models,getModelRef:()=>({provider:'fixture',modelId:'fixture'}),
+    buildTools:()=>[],authorizeTurn:async()=>({turnId:'finish-turn',canvasId:'canvas',permissionMode:'canvas',open:true}),completeTurn:async()=>{},settings:{retry:{maxRetries:0}}});
+  const entry=await store.ensureSession('canvas');
+  const submission=await store.submit(entry,{turnId:'finish-turn',permissionMode:'canvas',content:'say hello',userText:'say hello',revisionBefore:1});
+  const record=await settle(store.wait(entry,submission),5000,'finish_reason stream did not settle');
+  assert.equal(record.error,null);assert.equal(record.errorReason,null);assert.match(record.reply,/visible answer/);assert.equal(calls,1);
+});
+test('durable wait emits turn_timeout when the model stream stays silent', {timeout:20000}, async t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'beeftv-silent-stream-'));let store;
+  const server=http.createServer(async(req,res)=>{req.resume();res.writeHead(200,{'content-type':'text/event-stream'});res.write(': ping\n\n');});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const realFetch=globalThis.fetch;
+  globalThis.fetch=(input,options)=>fetchModelWithProgressIdle(input,options,{fetch:realFetch,timeoutMs:120,graceMs:5000});
+  t.after(async()=>{globalThis.fetch=realFetch;await store?.disposeAll();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));fs.rmSync(directory,{recursive:true,force:true});});
+  const runtime=await ModelRuntime.create({authPath:path.join(directory,'auth.json'),modelsPath:null,refreshOnCreate:false});
+  runtime.registerProvider('fixture',{api:'openai-completions',apiKey:'fixture',baseUrl:`http://127.0.0.1:${server.address().port}/v1`,models:[{id:'fixture',name:'fixture',reasoning:false,input:['text'],contextWindow:200000,maxTokens:1024,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}}]});
+  const models=createModels();models.setProvider(runtime.getProvider('fixture'));
+  store=createDurableSessionStore({sessionRoot:path.join(directory,'sessions'),workspaceRoot:path.join(directory,'workspace'),getModels:()=>models,getModelRef:()=>({provider:'fixture',modelId:'fixture'}),
+    buildTools:()=>[],authorizeTurn:async()=>({turnId:'silent-turn',canvasId:'canvas',permissionMode:'canvas',open:true}),completeTurn:async()=>{},settings:{retry:{maxRetries:0}},timeouts:{stallMs:10000,forceAfterMs:400}});
+  const entry=await store.ensureSession('canvas');
+  const submission=await store.submit(entry,{turnId:'silent-turn',permissionMode:'canvas',content:'say hello',userText:'say hello',revisionBefore:1});
+  const record=await settle(store.wait(entry,submission),5000,'silent stream did not settle');
+  assert.equal(record.errorReason,'turn_timeout');assert.match(record.error,/模型流/);assert.equal(record.cancelled,false);
+});
+test('durable wait emits tool_timeout when a tool step never returns', {timeout:20000}, async t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'beeftv-tool-hang-'));let calls=0;let store;
+  const server=http.createServer(async(req,res)=>{
+    let raw='';for await(const chunk of req)raw+=chunk;JSON.parse(raw);calls++;
+    res.writeHead(200,{'content-type':'text/event-stream'});
+    const frame=(delta,finish_reason=null)=>res.write(event({id:'fixture',object:'chat.completion.chunk',created:1,model:'fixture',choices:[{index:0,delta,finish_reason}]}));
+    if(calls===1){frame({role:'assistant',tool_calls:[{index:0,id:'hang-tool',type:'function',function:{name:'canvas_nodes_create',arguments:'{}'}}]});frame({},'tool_calls');res.end('data: [DONE]\n\n');}
+    else {frame({role:'assistant',content:'continued'});frame({},'stop');res.end('data: [DONE]\n\n');}
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const realFetch=globalThis.fetch;
+  globalThis.fetch=(input,options)=>fetchModelWithProgressIdle(input,options,{fetch:realFetch,timeoutMs:1000,graceMs:50});
+  t.after(async()=>{globalThis.fetch=realFetch;await store?.disposeAll();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));fs.rmSync(directory,{recursive:true,force:true});});
+  const runtime=await ModelRuntime.create({authPath:path.join(directory,'auth.json'),modelsPath:null,refreshOnCreate:false});
+  runtime.registerProvider('fixture',{api:'openai-completions',apiKey:'fixture',baseUrl:`http://127.0.0.1:${server.address().port}/v1`,models:[{id:'fixture',name:'fixture',reasoning:false,input:['text'],contextWindow:200000,maxTokens:1024,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}}]});
+  const models=createModels();models.setProvider(runtime.getProvider('fixture'));
+  store=createDurableSessionStore({sessionRoot:path.join(directory,'sessions'),workspaceRoot:path.join(directory,'workspace'),getModels:()=>models,getModelRef:()=>({provider:'fixture',modelId:'fixture'}),
+    buildTools:()=>[{name:'canvas_nodes_create',label:'canvas.nodes.create',description:'hangs',parameters:{type:'object',properties:{}},execute:()=>new Promise(()=>{})}],
+    authorizeTurn:async()=>({turnId:'tool-turn',canvasId:'canvas',permissionMode:'canvas',open:true}),completeTurn:async()=>{},settings:{retry:{maxRetries:0}},
+    timeouts:{toolMs:200,mediaToolMs:200,stallMs:10000,forceAfterMs:400}});
+  const entry=await store.ensureSession('canvas');
+  const submission=await store.submit(entry,{turnId:'tool-turn',permissionMode:'canvas',content:'write then stop',userText:'write then stop',revisionBefore:1});
+  const record=await settle(store.wait(entry,submission),5000,'hung tool did not settle');
+  assert.equal(record.errorReason,'tool_timeout');assert.match(record.error,/工具步骤超时/);assert.equal(record.cancelled,false);
 });
