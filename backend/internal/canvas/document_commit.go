@@ -14,6 +14,7 @@ import (
 // CommitUserCanvasDocument 把调用方给出的顶层文档覆盖应用到已存在的画布。
 // 这不是建画布，也不是任意数据库补丁：只覆盖 overlay 里出现的顶层字段，
 // 当前文档里未触及的键保持原样；身份、revision 与视口仍由服务端裁决。
+// viewport 与 viewportSeq 一律忽略。改视角必须走 SetUserCanvasViewport，不能靠整份文档提交。
 func (s *Service) CommitUserCanvasDocument(userID, canvasID string, expectedRevision int64, document json.RawMessage) (UserDataSummary, json.RawMessage, error) {
 	canvasID = strings.TrimSpace(canvasID)
 	if canvasID == "" {
@@ -71,7 +72,7 @@ func mergeCanvasDocumentOverlay(current, overlay json.RawMessage, canvasID strin
 	}
 	for key, value := range patch {
 		switch key {
-		case "id", "revision", "remoteContentHash", "viewport":
+		case "id", "revision", "remoteContentHash", "viewport", "viewportSeq":
 			continue
 		default:
 			base[key] = value

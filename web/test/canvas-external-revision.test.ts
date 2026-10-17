@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { decideExternalCanvasRevision } from "@/lib/canvas/canvas-external-revision";
+import { incomingCanvasViewport } from "@/lib/canvas/canvas-viewport-preference";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { CanvasNodeData } from "@/types/canvas";
 
@@ -70,6 +71,7 @@ describe("外部新 revision 的取舍", () => {
 
         if (decision.kind !== "apply") throw new Error("expected apply");
         expect(decision.project.viewport).toEqual({ x: 640, y: -120, k: 1.75 });
+        expect(incomingCanvasViewport(0, decision.project)).toBeNull();
         expect(decision.project.backgroundMode).toBe("dots");
         expect(decision.project.appearance).toEqual({ mode: "light" });
     });
@@ -83,5 +85,27 @@ describe("外部新 revision 的取舍", () => {
         if (decision.kind !== "apply") throw new Error("expected apply");
         expect(decision.project.id).toBe("new");
         expect(decision.localRevision).toBe(0);
+    });
+
+    test("更高的视口序号采用服务端相机，相同序号保留本地平移", () => {
+        const local = project({ id: "c1", revision: 4, viewport: { x: 640, y: -120, k: 1.75 }, viewportSeq: 2 });
+        const sameSeq = decideExternalCanvasRevision({
+            remote: project({ id: "c1", revision: 5, viewport: { x: 0, y: 0, k: 1 }, viewportSeq: 2 }),
+            local,
+            hasLocalEdits: false,
+        });
+        if (sameSeq.kind !== "apply") throw new Error("expected apply");
+        expect(sameSeq.project.viewport).toEqual(local.viewport);
+        expect(incomingCanvasViewport(2, sameSeq.project)).toBeNull();
+
+        const newer = decideExternalCanvasRevision({
+            remote: project({ id: "c1", revision: 6, viewport: { x: 12, y: -40, k: 0.12 }, viewportSeq: 3 }),
+            local,
+            hasLocalEdits: false,
+        });
+        if (newer.kind !== "apply") throw new Error("expected apply");
+        expect(newer.project.viewport).toEqual({ x: 12, y: -40, k: 0.12 });
+        expect(newer.project.viewportSeq).toBe(3);
+        expect(incomingCanvasViewport(2, newer.project)).toEqual({ seq: 3, viewport: { x: 12, y: -40, k: 0.12 } });
     });
 });

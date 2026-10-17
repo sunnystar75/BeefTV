@@ -56,6 +56,24 @@ func TestTimelineReceiptReconstructionAndRealUndo(t *testing.T) {
 	}
 }
 
+func TestViewportPreferenceDoesNotCountAsDocumentChange(t *testing.T) {
+	before := map[string]any{
+		"nodes": []any{map[string]any{"id": "n", "title": "original"}}, "connections": []any{},
+		"viewport": map[string]any{"x": 0.0, "y": 0.0, "k": 1.0}, "viewportSeq": float64(1), "title": "keep",
+	}
+	after := map[string]any{
+		"nodes": before["nodes"], "connections": before["connections"],
+		"viewport": map[string]any{"x": 12.0, "y": 5800.0, "k": 0.2}, "viewportSeq": float64(2), "title": "keep",
+	}
+	if !assistantturns.MatchesChange(before, after, &assistantturns.Change{RevisionBefore: 1, RevisionAfter: 2}) {
+		t.Fatal("viewport-only diff rejected")
+	}
+	after["title"] = "other"
+	if assistantturns.MatchesChange(before, after, &assistantturns.Change{RevisionBefore: 1, RevisionAfter: 2}) {
+		t.Fatal("title diff accepted beside viewport")
+	}
+}
+
 func TestTimelineChangeCannotAuthorizeOtherDocumentDifferences(t *testing.T) {
 	before := map[string]any{"nodes": []any{map[string]any{"id": "n", "title": "original"}}, "connections": []any{}, "timeline": map[string]any{"durationMs": 1000}, "title": "keep", "plugin": "keep"}
 	after := map[string]any{"nodes": before["nodes"], "connections": before["connections"], "timeline": map[string]any{"durationMs": 2000}, "title": "keep", "plugin": "keep"}

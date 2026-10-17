@@ -139,10 +139,16 @@ func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (U
 }
 
 func (s *Service) upsertUserCanvasProjectWithHistory(userID string, raw json.RawMessage, reason string) (UserDataSummary, error) {
-	return s.upsertUserCanvasProjectWithAssets(userID, raw, nil, reason)
+	return s.upsertUserCanvasProjectWithAssets(userID, raw, nil, reason, false)
 }
 
-func (s *Service) upsertUserCanvasProjectWithAssets(userID string, raw json.RawMessage, candidateAssets []model.Asset, reason string) (UserDataSummary, error) {
+// upsertUserCanvasProjectReplacingViewport 只给视口操作使用：接受调用方已经写好的 viewport 与 viewportSeq。
+// 普通文档保存仍走 preserve，忽略客户端带来的视角。
+func (s *Service) upsertUserCanvasProjectReplacingViewport(userID string, raw json.RawMessage) (UserDataSummary, error) {
+	return s.upsertUserCanvasProjectWithAssets(userID, raw, nil, "automatic", true)
+}
+
+func (s *Service) upsertUserCanvasProjectWithAssets(userID string, raw json.RawMessage, candidateAssets []model.Asset, reason string, keepIncomingViewport bool) (UserDataSummary, error) {
 	var version struct {
 		Revision *int64 `json:"revision"`
 	}
@@ -195,11 +201,24 @@ func (s *Service) upsertUserCanvasProjectWithAssets(userID string, raw json.RawM
 		}
 		delete(payload, "revision")
 		delete(payload, "remoteContentHash")
-		payload["viewport"] = json.RawMessage(`{"x":0,"y":0,"k":1}`)
-		if existing != nil {
-			var previous map[string]json.RawMessage
-			if json.Unmarshal([]byte(existing.PayloadJSON), &previous) == nil && previous["viewport"] != nil {
-				payload["viewport"] = previous["viewport"]
+		if keepIncomingViewport {
+			if strings.TrimSpace(string(payload["viewport"])) == "" || strings.TrimSpace(string(payload["viewport"])) == "null" {
+				return kernel.BadAuthRequest("视口必填")
+			}
+		} else {
+			// 文档保存不接受客户端视角。已有视口和视口序号原样保留，避免整份提交改相机。
+			payload["viewport"] = json.RawMessage(`{"x":0,"y":0,"k":1}`)
+			delete(payload, "viewportSeq")
+			if existing != nil {
+				var previous map[string]json.RawMessage
+				if json.Unmarshal([]byte(existing.PayloadJSON), &previous) == nil {
+					if previous["viewport"] != nil {
+						payload["viewport"] = previous["viewport"]
+					}
+					if previous["viewportSeq"] != nil {
+						payload["viewportSeq"] = previous["viewportSeq"]
+					}
+				}
 			}
 		}
 		payload["createdAt"], _ = json.Marshal(project.CreatedAt)

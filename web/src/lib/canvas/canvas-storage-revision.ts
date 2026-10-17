@@ -2,6 +2,7 @@ import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData } from "@/types/canvas";
 import { normalizeAssetCategory } from "@/lib/asset-category";
 import { sameCanvasContent } from "@/lib/canvas/canvas-content";
+import { mergeCanvasViewportPreference } from "@/lib/canvas/canvas-viewport-preference";
 
 export type CanvasStorageTombstones = {
     projects: Record<string, number>;
@@ -337,7 +338,10 @@ function mergeProject(base: CanvasProject | undefined, local: CanvasProject, dur
     if (local.revision !== durable.revision) {
         // Never attach another tab's newer server revision to this tab's stale edits.
         // Preserve the whole edited branch; the server will reject its stale revision.
-        if (local.revision === base?.revision && sameCanvasContent(base, local)) return { ...durable, viewport: local.viewport };
+        if (local.revision === base?.revision && sameCanvasContent(base, local)) {
+            const view = mergeCanvasViewportPreference(local, durable);
+            return { ...durable, viewport: view.viewport, viewportSeq: view.viewportSeq };
+        }
         return local;
     }
     const common = {

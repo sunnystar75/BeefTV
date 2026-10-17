@@ -3,7 +3,7 @@ import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 
 // These fields describe local viewing / synchronization, not an edit to the document.
 export function canvasContentSnapshot(project: CanvasProject) {
-    const { viewport: _viewport, updatedAt: _updatedAt, revision: _revision, remoteContentHash: _hash, ...content } = project;
+    const { viewport: _viewport, viewportSeq: _viewportSeq, updatedAt: _updatedAt, revision: _revision, remoteContentHash: _hash, ...content } = project;
     return { ...content, projectId: content.projectId || undefined };
 }
 

@@ -79,6 +79,21 @@ describe("画布刷新接缝", () => {
         expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
     });
 
+    test("更高的视口序号会替换本机相机", async () => {
+        await seedConfirmedProject(project("c1", 3, { viewport: { x: 420, y: -80, k: 1.5 }, viewportSeq: 1 }), 7);
+
+        const decision = applyExternalCanvasRevision(project("c1", 4, {
+            viewport: { x: 12, y: -40, k: 0.12 },
+            viewportSeq: 3,
+        }) as never, { hasUnsyncedEdits: false });
+
+        expect(decision.kind).toBe("apply");
+        const live = useCanvasStore.getState().projects[0];
+        expect(live.viewport).toEqual({ x: 12, y: -40, k: 0.12 });
+        expect(live.viewportSeq).toBe(3);
+        expect(live.nodes).toHaveLength(1);
+    });
+
     test("有未确认编辑时不覆盖用户值，并把远端保留为候选", async () => {
         await seedConfirmedProject(project("c1", 3), 7);
         const remote = project("c1", 9, {

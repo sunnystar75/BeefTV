@@ -290,3 +290,24 @@ describe("rebaseCanvasDocumentThreeWay node timestamps", () => {
         expect(result.project.nodes.map((item) => item.title)).toEqual(["本地改过的标题"]);
     });
 });
+
+describe("rebaseCanvasDocumentThreeWay viewport", () => {
+    test("a newer viewport sequence replaces the local camera without touching nodes", () => {
+        const base = project([node("n1", "镜头")], 4);
+        const local = { ...project([node("n1", "镜头")], 4), viewport: { x: 20, y: 30, k: 1 }, viewportSeq: 1 };
+        const remote = { ...project([node("n1", "远端")], 5), viewport: { x: 8, y: -12, k: 0.2 }, viewportSeq: 2 };
+        const result = rebaseCanvasDocumentThreeWay({ base, local, remote });
+        expect(result.project.viewport).toEqual({ x: 8, y: -12, k: 0.2 });
+        expect(result.project.viewportSeq).toBe(2);
+        expect(result.project.nodes[0]?.title).toBe("远端");
+    });
+
+    test("the same viewport sequence keeps a local pan", () => {
+        const base = project([node("n1", "镜头")], 4);
+        const local = { ...project([node("n1", "镜头")], 4), viewport: { x: 20, y: 30, k: 1.2 }, viewportSeq: 2 };
+        const remote = { ...project([node("n1", "镜头")], 5), viewport: { x: 0, y: 0, k: 1 }, viewportSeq: 2 };
+        const result = rebaseCanvasDocumentThreeWay({ base, local, remote });
+        expect(result.project.viewport).toEqual({ x: 20, y: 30, k: 1.2 });
+        expect(result.project.viewportSeq).toBe(2);
+    });
+});

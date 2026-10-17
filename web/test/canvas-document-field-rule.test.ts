@@ -84,8 +84,9 @@ describe("sameCanvasDocument 的字段规则", () => {
     });
 
     test("canvasContentSnapshot 仍是拒绝字段的唯一来源（视口/时间戳/revision/远端哈希）", () => {
-        const snapshot = canvasContentSnapshot(project({ viewport: { x: 1, y: 1, k: 1 }, revision: 42 }));
+        const snapshot = canvasContentSnapshot(project({ viewport: { x: 1, y: 1, k: 1 }, viewportSeq: 4, revision: 42 }));
         expect("viewport" in snapshot).toBe(false);
+        expect("viewportSeq" in snapshot).toBe(false);
         expect("updatedAt" in snapshot).toBe(false);
         expect("revision" in snapshot).toBe(false);
         expect("remoteContentHash" in snapshot).toBe(false);

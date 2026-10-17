@@ -128,7 +128,7 @@ func canvasHistoryContent(project model.CanvasProject) ([]byte, error) {
 	if err := decoder.Decode(&payload); err != nil {
 		return nil, err
 	}
-	for _, key := range []string{"revision", "updatedAt", "createdAt", "viewport", "remoteContentHash"} {
+	for _, key := range []string{"revision", "updatedAt", "createdAt", "viewport", "viewportSeq", "remoteContentHash"} {
 		delete(payload, key)
 	}
 	return json.Marshal(payload)

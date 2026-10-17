@@ -1,0 +1,70 @@
+---
+title: 画布视口操作
+description: 用 canvas.viewport.fit 对准节点或设置相机，不要用 document.commit 改视角
+---
+
+批量创建或移动节点之后，节点可能落在世界坐标很远的位置，而画布视角仍停在 `{x:0,y:0,k:1}`。`canvas.viewport.fit` 只更新相机，让 CLI、MCP 和内置助手把这些节点移进画面。
+
+## 禁止用整份文档提交改视角
+
+**不要**调用 `canvas.document.commit` 来设置 `viewport`。该操作按整份文档做 CAS 覆盖：`document.nodes` 里有什么，画布节点就变成什么。2026-10-17 的一次外部调用把只含 1 个节点的文档提交进去，节点从 149 个变成 1 个。
+
+`canvas.document.commit` 会忽略 `viewport` 和 `viewportSeq`。用它「顺手改视角」既改不了相机，又有整布覆盖风险。绑定、改标题、挪节点继续使用 `canvas.node.update`、`canvas.node.configure`、`canvas.node.move`、`canvas.nodes.create` 和 `canvas.edge.*`。
+
+## 调用
+
+先 `canvas.get` 读取 `revision`，再提交。写操作要带稳定的 `operationId`（CLI 的 `--op-id`）。同一操作 ID 配同一参数会回放原回执，不会再次移动相机。
+
+```bash
+beeftv ops call canvas.viewport.fit --op-id fit-scene-01 --params '{
+  "canvasId": "<canvasId>",
+  "expectedRevision": 12,
+  "viewportSize": { "width": 1440, "height": 900 }
+}'
+```
+
+`viewportSize` 是适应计算用的窗口尺寸，单位是 CSS 像素。省略 `nodeIds`、`bbox` 和 `viewport` 时，对准当前可见节点。默认内边距 88、最小缩放 0.05。全部节点和包围盒的最大缩放默认 1，与界面「适应画布」相同；指定节点的最大缩放默认 1.25，与界面「适应选区」相同。调用方可以用 `maxScale` 覆盖。收起的批量子节点和折叠画框里的子节点不参与包围盒。缺宽高的节点按 320×220 计入包围盒。
+
+对准指定节点：
+
+```bash
+beeftv ops call canvas.viewport.fit --op-id fit-nodes-01 --params '{
+  "canvasId": "<canvasId>",
+  "expectedRevision": 13,
+  "nodeIds": ["<nodeId>"],
+  "viewportSize": { "width": 1440, "height": 900 }
+}'
+```
+
+对准世界坐标包围盒，或直接设置相机：
+
+```bash
+beeftv ops call canvas.viewport.fit --op-id fit-bbox-01 --params '{
+  "canvasId": "<canvasId>",
+  "expectedRevision": 14,
+  "bbox": { "left": -1500, "top": 5800, "right": 4543, "bottom": 15705 },
+  "viewportSize": { "width": 1440, "height": 900 }
+}'
+
+beeftv ops call canvas.viewport.fit --op-id set-viewport-01 --params '{
+  "canvasId": "<canvasId>",
+  "expectedRevision": 15,
+  "viewport": { "x": -20, "y": -900, "k": 0.12 }
+}'
+```
+
+`viewport`、`nodeIds`、`bbox` 三者只能出现一个。`k` 必须在 0.05 到 8 之间。`expectedRevision` 必须是 `canvas.get` 读到的当前版本；过期版本会被拒绝，节点保持原样。
+
+回执包含 `canvasId`、`revision`、`viewport`、`viewportSeq`、`target`（`all`、`nodes`、`bbox` 或 `exact`）和 `checkpoint`。适应模式还会返回 `bounds`；`all` 和 `nodes` 还会返回 `fittedNodeCount`。回执里没有节点数组。
+
+`checkpoint` 是写入前的相机：`revision`、`viewport`、`viewportSeq`。调用前的 `canvas.get` 加上这份回执就是检查点。要回到原来的视角，用回执里的新 `revision` 再调一次精确设视角，把 `viewport` 设成 `checkpoint.viewport`。这仍然只改相机。失败的写入和操作回执在同一个事务里，回滚后文档与写入前一致，节点字节不会留下半次修改。
+
+历史恢复不会把相机拉回去：恢复走普通文档保存，保留当前 `viewport`。不要用 `canvas.document.commit`，也不要靠历史快照来回滚视角。
+
+## 保存与重新打开
+
+视口写入进画布文档的 `viewport`，并递增 `viewportSeq`。之后的普通文档保存会保留这两个字段，不会用提交体里的视角覆盖它们。历史内容比较会去掉它们，所以只改视角不产生一份新的内容快照，也不会改 `nodes`。
+
+界面缩放或拖动时，本地相机仍按原来的方式记在画布状态里。`viewportSeq` 没有前进时，外部节点写入不会把用户正在看的位置拉走。`canvas.viewport.fit` 成功后序号前进，已打开的画布在下一次外部刷新里采用新相机；重新打开或重启后读到的也是这次写入的视角。
+
+撤销一轮节点修改时，已写入的视角留在原地。视角不是文档内容，不会随节点撤销被拉回 `{x:0,y:0,k:1}`，也不会借撤销去改 `nodes`。只改视角不产生内容快照；可回滚的是回执里的 `checkpoint`，不是一份新的历史版本。

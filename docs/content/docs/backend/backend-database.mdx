@@ -129,7 +129,7 @@ HTTPS 图片提交前读取同源 `/models` 元数据，仅成功响应明确声
 
 | 表 | 用途 | 关键边界 |
 | --- | --- | --- |
-| `canvas_projects` | 画布文档（含 `revision` 与 `library_folder_id`） | 写入按 `revision` 原子 CAS：缺少读取时的 revision 或 revision 已过期都拒绝，不会覆盖别人刚写入的内容；`viewport` 属于本机查看偏好，由服务端规范化，不按内容保存；文件夹归属以 `library_folder_id` 为准，读回时覆盖 payload 中的 `folderId` |
+| `canvas_projects` | 画布文档（含 `revision` 与 `library_folder_id`） | 写入按 `revision` 原子 CAS：缺少读取时的 revision 或 revision 已过期都拒绝，不会覆盖别人刚写入的内容；`viewport` 与 `viewportSeq` 不是画布内容，普通文档保存（含 `canvas.document.commit`）保留已存储视角并忽略提交体里的视角，只有 `canvas.viewport.fit` 会替换它们；历史内容比较会去掉这两个字段，只改视角不产生内容快照；文件夹归属以 `library_folder_id` 为准，读回时覆盖 payload 中的 `folderId` |
 | `canvas_library_folders` | 画布库文件夹 | 按用户归属；删除写入 `deleted_at` 墓碑并清空封面引用，不会物理删行；同时把仍指向它的画布 `library_folder_id`、`payload_json` 与 `revision` 一并更新并记历史。同 ID 不能再导入。封面是资源 ID |
 | `canvas_drawings` | 画板快照与 revision | 主键 `(user_id, canvas_id, drawing_id)`；写入按 revision CAS，丢失应答且正文相同可回放已提交结果；预览和成品字节走资源 ID，参与资源删除引用检查；删除写入墓碑并清空快照与资源引用。未保存草稿由前端保留为可恢复内容，禁止按原 ID 自动重建；后端不另存一份正文。快照计入账号画布和素材数据上限（`StructuredDataMB`），HTTP 请求体为该上限加 JSON 信封余量，没有单独的 8MB 画板上限 |
 | `canvas_snapshots`、`canvas_snapshot_resources` | 画布历史快照与快照引用的资源 | 快照读写按归属校验；历史恢复同样走 revision 前置条件 |

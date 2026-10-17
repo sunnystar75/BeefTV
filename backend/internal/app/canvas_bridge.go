@@ -513,6 +513,10 @@ func (s *operationSession) CommitUserCanvasDocument(userID string, canvasID stri
 	return s.canvas.CommitUserCanvasDocument(userID, canvasID, expectedRevision, document)
 }
 
+func (s *operationSession) SetUserCanvasViewport(userID string, canvasID string, expectedRevision int64, cmd canvas.ViewportCommand) (canvas.ViewportResult, error) {
+	return s.canvas.SetUserCanvasViewport(userID, canvasID, expectedRevision, cmd)
+}
+
 func (s *operationSession) WorkspaceTask(userID string, id string) (*model.Task, error) {
 	if s.repo == nil {
 		return nil, gorm.ErrRecordNotFound
