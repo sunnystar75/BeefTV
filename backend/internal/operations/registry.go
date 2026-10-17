@@ -233,6 +233,13 @@ func (r *Registry) Execute(req Request) (Result, error) {
 			return Result{}, InvalidArg("effect_identity_mismatch", "写操作 opId 必须是 attach-message:任务:消息:输出序号")
 		}
 	}
+	if op.ID == "canvas.generation.confirm" {
+		if key := confirmEffectKey(params); key == "" {
+			return Result{}, InvalidArg("invalid_params", "proposalId 必填")
+		} else if opID != key {
+			return Result{}, InvalidArg("effect_identity_mismatch", "确认操作的 opId 必须是 confirm:提案ID")
+		}
+	}
 	if op.ReadOnly && strings.TrimSpace(req.OpID) != "" {
 		return Result{}, InvalidArg("unexpected_op_id", "只读操作不支持 opId")
 	}
@@ -304,6 +311,11 @@ func (r *Registry) Execute(req Request) (Result, error) {
 				return Result{}, AsError(err)
 			}
 		}
+	}
+	if op.ID == "canvas.generation.confirm" {
+		// 回放也重新投递尚未确认的白膜请求：桌面如果当时没打开，重试同一 confirm:提案ID 仍能开始录制。
+		// 已经 ack 的请求不会再投递，避免同一次确认录两段。
+		publishDirectorPreviewDispatch(req.UserID, decoded)
 	}
 	return Result{
 		Op:       op.ID,

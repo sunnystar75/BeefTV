@@ -60,6 +60,12 @@ export function assistantActionLabel(tool: string | undefined): string {
             return "读取画布";
         case "canvas.generation.propose":
             return "准备生成";
+        case "director.shot.export_preview":
+        case "director_shot_export_preview":
+            return "准备白膜导出";
+        case "canvas.generation.confirm":
+        case "canvas_generation_confirm":
+            return "确认白膜导出";
         default:
             return "改动画布";
     }
@@ -121,6 +127,9 @@ export function assistantUndoFailureText(failure: AssistantUndoFailure): string 
 /** 提议可能来自自建渠道，不能把所有费用都归到 BeefAPI。 */
 export function assistantProposalText(proposal: AssistantGenerationProposal, priceLines: string[] = []): string {
     const count = proposal.nodeIds?.length ?? 0;
+    if (proposal.kind === "director_preview") {
+        return `导出 ${count} 段白膜视频 · 导演白膜\n本地录制，不另计模型费用。`;
+    }
     const target = proposal.kind === "video" ? "视频" : "图片";
     return `生成 ${count} ${target === "视频" ? "段视频" : "张参考图片"} · ${seedancePortraitLabel(proposal.model) || proposal.model}\n${priceLines.length ? priceLines.join("\n") + "\n" : ""}确认后开始，按所选渠道计费。`;
 }

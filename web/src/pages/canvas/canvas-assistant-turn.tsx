@@ -119,7 +119,8 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
                 const selectedModel = proposal.modelKey || proposal.model;
                 const portrait = seedancePortraitModel(selectedModel);
                 const profile = seedancePortraitLabel(selectedModel) ? resolveModelChannel(config, selectedModel).modelProfiles?.find((item) => item.model === modelOptionName(selectedModel)) : undefined;
-                const priceError = portrait ? portraitGenerationError(config, selectedModel) : "";
+                const clayPreview = proposal.kind === "director_preview";
+                const priceError = clayPreview || !portrait ? "" : portraitGenerationError(config, selectedModel);
                 const running = Boolean(runningProposalIds?.has(proposal.proposalId));
                 return (
                     <div key={proposal.proposalId} className="canvas-assistant-card">
@@ -135,7 +136,7 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
                         ) : (
                             <div className="canvas-assistant-card-actions">
                                 <Button size="small" type="primary" autoInsertSpace={false} loading={running} disabled={Boolean(priceError)} onClick={() => onRunProposal(proposal, turn.turnId)}>
-                                    生成
+                                    {clayPreview ? "导出白膜" : "生成"}
                                 </Button>
                                 <Button size="small" disabled={running} onClick={() => onDismissProposal(proposal.proposalId)}>
                                     先不用

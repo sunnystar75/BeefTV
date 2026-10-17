@@ -148,6 +148,14 @@ describe("付费生成确认", () => {
         expect(text).toContain("生成 1 段视频");
     });
 
+    test("白膜提议说明本地录制且不显示模型键", () => {
+        const text = assistantProposalText({ proposalId: "clay", kind: "director_preview", nodeIds: ["a", "b"], model: "导演白膜", modelKey: "local::director-clay-preview", charged: false });
+        expect(text).toContain("导出 2 段白膜视频");
+        expect(text).toContain("不另计模型费用");
+        expect(text).not.toContain("local::");
+        expect(text).not.toContain("按所选渠道计费");
+    });
+
     test("旧真人模型提议显示统一名称与当前渠道报价", () => {
         const text = assistantProposalText({ proposalId: "portrait", kind: "video", nodeIds: ["a"], model: "seedance-2.0-portrait", modelKey: "byok::seedance-2.0-portrait" }, ["720p：无视频输入 ¥69，含视频输入 ¥42 / 百万视频 Token"]);
         expect(text).toContain("Seedance 2.0");

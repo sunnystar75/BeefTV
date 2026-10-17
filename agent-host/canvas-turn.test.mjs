@@ -139,9 +139,26 @@ describe("付费生成提议", () => {
             model: "wan3.0-video", modelKey: "beefapi::wan3.0-video", note: "两段镜头" }]);
     });
 
+    test("白膜提议只记录免费来源，不补造模型配置版本", () => {
+        const turn = resetTurnAccumulator(newTurnAccumulator(), 4);
+        collectTurnEffects(turn, "director.shot.export_preview", {
+            proposalId: "gp-clay", kind: "director_preview", nodeIds: ["dir-1"],
+            model: "导演白膜", modelKey: "local::director-clay-preview", charged: false, local: true,
+            source: { canvasId: "canvas", canvasRevision: 9 },
+        });
+        expect(turnChange(turn)).toBeNull();
+        expect(turn.proposals).toEqual([{
+            proposalId: "gp-clay", kind: "director_preview", nodeIds: ["dir-1"],
+            model: "导演白膜", modelKey: "local::director-clay-preview", note: "", charged: false,
+            source: { canvasId: "canvas", canvasRevision: 9 },
+        }]);
+    });
+
     test("系统提示词必须禁止宣称已生成，并指向提议工具", () => {
         expect(SYSTEM_PROMPT).toContain("canvas_generation_propose");
         expect(SYSTEM_PROMPT).toContain("不能直接开始付费图片或视频生成");
+        expect(SYSTEM_PROMPT).toContain("director_shot_export_preview");
+        expect(SYSTEM_PROMPT).toContain("不另计模型费用");
     });
 
     test("系统提示词用 content 改可编辑提示词，未改字段不要提交", () => {

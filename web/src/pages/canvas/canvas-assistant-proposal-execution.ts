@@ -40,6 +40,11 @@ export function buildConfirmedGenerationConfig(
 }
 
 export async function executeAssistantProposal({ proposal, nodes, claims, isHandled, confirmRunnable, prepare, generate, markHandled, notify, stillOwns }: ProposalExecution) {
+    const kind = proposal.kind;
+    if (kind !== "image" && kind !== "video") {
+        notify("白膜导出由导演台在本机录制，不会提交付费生成。");
+        return;
+    }
     if (isHandled || claims.has(proposal.proposalId)) {
         notify("这项提案已提交或正在提交，请在任务列表查看进度。");
         return;
@@ -86,7 +91,7 @@ export async function executeAssistantProposal({ proposal, nodes, claims, isHand
         }
         await Promise.allSettled(confirmedTargets.map(async (node) => {
             if (!node) return;
-            await generate(node.id, proposal.kind, node.metadata?.composerContent ?? node.metadata?.prompt ?? "", {
+            await generate(node.id, kind, node.metadata?.composerContent ?? node.metadata?.prompt ?? "", {
                 confirmedModelKey: modelKey,
                 confirmedInputs,
                 clientOperationId: `proposal:${proposal.proposalId}:${node.id}`,
