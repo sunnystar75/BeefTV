@@ -8,7 +8,7 @@ import {ModelRuntime} from '@earendil-works/pi-coding-agent';
 import {createModels} from '@earendil-works/pi-ai/models';
 import {BACKGROUND_CONTEXT} from '@earendil-works/chord/context';
 import {createDurableSessionStore} from './durable-session-owner.mjs';
-import {fetchModelWithProgressIdle, classifyModelStreamEvent, DEFAULT_MODEL_STREAM_IDLE_MS, DEFAULT_STREAM_TERMINAL_GRACE_MS} from './model-stream-idle.mjs';
+import {fetchModelWithProgressIdle, classifyModelStreamEvent, DEFAULT_MODEL_STREAM_IDLE_MS, DEFAULT_STREAM_TERMINAL_GRACE_MS, DEFAULT_MODEL_STREAM_DEADLINE_MS} from './model-stream-idle.mjs';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const event = data => `data: ${JSON.stringify(data)}\n\n`;
 async function fixture(t, run, contentType = 'text/event-stream') {
@@ -86,10 +86,52 @@ for(const [path,body,type] of [['/models/gemini:streamGenerateContent',{stream:t
 });
 test('finish_reason is terminal, not progress that can keep a silent body alive', () => {
   assert.equal(DEFAULT_STREAM_TERMINAL_GRACE_MS, 5000);
+  assert.equal(DEFAULT_MODEL_STREAM_DEADLINE_MS, 20 * 60 * 1000);
   assert.equal(classifyModelStreamEvent('completions', JSON.stringify({choices:[{delta:{},finish_reason:'stop'}]})), 'terminal');
   assert.equal(classifyModelStreamEvent('completions', JSON.stringify({choices:[{delta:{content:'答案'},finish_reason:'stop'}]})), 'progress-terminal');
   assert.equal(classifyModelStreamEvent('completions', JSON.stringify({choices:[{delta:{content:''}}]})), 'ignore');
+  assert.equal(classifyModelStreamEvent('completions', JSON.stringify({choices:[{delta:{content:' \n',reasoning_content:'思考'}}]})), 'reasoning');
+  assert.equal(classifyModelStreamEvent('completions', JSON.stringify({choices:[{delta:{reasoning_content:'思考'},finish_reason:'stop'}]})), 'terminal');
   assert.equal(classifyModelStreamEvent('completions', '[DONE]'), 'terminal');
+});
+test('reasoning-only and whitespace deltas cannot extend chat completion idle', async t => {
+  const f = await fixture(t, res => {
+    const timer = setInterval(() => res.write(': PING\n\n' + event({choices:[{delta:{content:' \u200b',reasoning_content:'仍在思考'}}]})), 15);
+    res.on('close', () => clearInterval(timer));
+  });
+  const result = await read(await fetchModelWithProgressIdle(f.url + '/chat/completions', request().options, {timeoutMs: 80, graceMs: 1000, deadlineMs: 5000}));
+  assert.match(result.error.message, /stream idle timeout/);
+  await delay(30);
+  assert.equal(f.closed(), 1);
+});
+test('answer-shaped drip still hits the non-resetting stream deadline', async t => {
+  const f = await fixture(t, res => {
+    let n = 0;
+    const timer = setInterval(() => res.write(event({choices:[{delta:{content:'词' + (n++)}}]})), 15);
+    res.on('close', () => clearInterval(timer));
+  });
+  const started = Date.now();
+  const result = await read(await fetchModelWithProgressIdle(f.url + '/chat/completions', request().options, {timeoutMs: 5000, graceMs: 1000, deadlineMs: 90}));
+  assert.match(result.error.message, /Model stream deadline/);
+  assert.doesNotMatch(result.error.message, /stream idle timeout/);
+  assert(Date.now() - started < 500);
+  await delay(30);
+  assert.equal(f.closed(), 1);
+});
+test('reasoning after finish_reason does not cancel the terminal grace', async t => {
+  const f = await fixture(t, res => {
+    res.write(event({choices:[{delta:{reasoning_content:'思考'}}]}));
+    res.write(event({choices:[{delta:{},finish_reason:'stop'}]}));
+    const timer = setInterval(() => res.write(': PING\n\n' + event({choices:[{delta:{reasoning_content:'还在'}}]})), 15);
+    res.on('close', () => clearInterval(timer));
+  });
+  const started = Date.now();
+  const result = await read(await fetchModelWithProgressIdle(f.url + '/chat/completions', request().options, {timeoutMs: 2000, graceMs: 80, deadlineMs: 5000}));
+  assert.equal(result.error, undefined);
+  assert(result.text.includes('finish_reason'));
+  assert(Date.now() - started < 500);
+  await delay(40);
+  assert.equal(f.closed(), 1);
 });
 test('finish_reason without [DONE] completes despite pings and repeated terminal frames', async t => {
   const done = event({choices:[{delta:{},finish_reason:'stop'}]});
@@ -189,6 +231,27 @@ test('durable wait emits turn_timeout when the model stream stays silent', {time
   const entry=await store.ensureSession('canvas');
   const submission=await store.submit(entry,{turnId:'silent-turn',permissionMode:'canvas',content:'say hello',userText:'say hello',revisionBefore:1});
   const record=await settle(store.wait(entry,submission),5000,'silent stream did not settle');
+  assert.equal(record.errorReason,'turn_timeout');assert.match(record.error,/模型流/);assert.equal(record.cancelled,false);
+});
+test('durable wait settles a beefapi-style reasoning drip that never finishes', {timeout:20000}, async t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'beeftv-reasoning-drip-'));let store;
+  const server=http.createServer(async(req,res)=>{
+    req.resume();res.writeHead(200,{'content-type':'text/event-stream'});
+    const timer=setInterval(()=>res.write(': PING\n\n'+event({id:'beef',object:'chat.completion.chunk',choices:[{index:0,delta:{content:'',reasoning_content:'仍在思考'},finish_reason:null}]})),20);
+    res.on('close',()=>clearInterval(timer));
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const realFetch=globalThis.fetch;
+  globalThis.fetch=(input,options)=>fetchModelWithProgressIdle(input,options,{fetch:realFetch,timeoutMs:120,graceMs:5000,deadlineMs:10000});
+  t.after(async()=>{globalThis.fetch=realFetch;await store?.disposeAll();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));fs.rmSync(directory,{recursive:true,force:true});});
+  const runtime=await ModelRuntime.create({authPath:path.join(directory,'auth.json'),modelsPath:null,refreshOnCreate:false});
+  runtime.registerProvider('fixture',{api:'openai-completions',apiKey:'fixture',baseUrl:`http://127.0.0.1:${server.address().port}/v1`,models:[{id:'fixture',name:'fixture',reasoning:false,input:['text'],contextWindow:200000,maxTokens:1024,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}}]});
+  const models=createModels();models.setProvider(runtime.getProvider('fixture'));
+  store=createDurableSessionStore({sessionRoot:path.join(directory,'sessions'),workspaceRoot:path.join(directory,'workspace'),getModels:()=>models,getModelRef:()=>({provider:'fixture',modelId:'fixture'}),
+    buildTools:()=>[],authorizeTurn:async()=>({turnId:'reasoning-turn',canvasId:'canvas',permissionMode:'canvas',open:true}),completeTurn:async()=>{},settings:{retry:{maxRetries:0}},timeouts:{stallMs:10000,forceAfterMs:400}});
+  const entry=await store.ensureSession('canvas');
+  const submission=await store.submit(entry,{turnId:'reasoning-turn',permissionMode:'canvas',content:'say hello',userText:'say hello',revisionBefore:1});
+  const record=await settle(store.wait(entry,submission),5000,'reasoning drip did not settle');
   assert.equal(record.errorReason,'turn_timeout');assert.match(record.error,/模型流/);assert.equal(record.cancelled,false);
 });
 test('durable wait emits tool_timeout when a tool step never returns', {timeout:20000}, async t => {
