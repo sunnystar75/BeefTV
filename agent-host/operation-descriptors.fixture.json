@@ -67,15 +67,20 @@
   },
   {
     "id": "canvas.document.commit",
-    "summary": "按已知服务端 revision 提交整份画布文档（保留未触及字段，带 CAS）",
+    "summary": "整份画布 CAS 覆盖（document.nodes 替换全部节点，不是局部 upsert）。外部或 owner CLI 若会删除已有节点，必须在顶层传 allowFullDocumentReplace=true；绑定请用 canvas.node.*",
     "readOnly": false,
     "scope": "canvas",
     "params": {
       "properties": {
+        "allowFullDocumentReplace": {
+          "description": "显式确认整份节点替换。外部 CLI/MCP 与 owner 凭据调用在提交的 nodes 会删除已有节点时必须为 true。手工界面保存不需要。该字段与 document 同级，写进 document 正文不会生效。",
+          "type": "boolean"
+        },
         "canvasId": {
           "type": "string"
         },
         "document": {
+          "description": "顶层文档覆盖。出现 nodes 时整表替换节点，不是按节点 upsert。未出现的顶层字段保持原样。",
           "type": "object"
         },
         "expectedRevision": {

@@ -91,6 +91,14 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 `operation_id_conflict`，不会自行挑选其中一个身份。外部 MCP/CLI 的能力描述保留 `operationId` 作为稳定幂等键；
 内置助手宿主自己生成幂等键，因此它看到的能力描述不含该字段。
 
+### 整份画布提交
+
+`canvas.document.commit` 是整份画布文档的 CAS 覆盖，不是按节点 upsert。`document` 里没写到的顶层字段保持原样；一旦写了 `nodes`，该数组就会替换画布上的全部节点。`PUT /canvas-projects/:id` 用请求里的 `project` 替换整份正文，省略 `nodes` 也会把节点从保存结果里拿掉。绑定、改标题、改提示词、移动、删除和连线应使用 `canvas.nodes.create`、`canvas.node.update`、`canvas.node.configure`、`canvas.node.move`、`canvas.node.delete` 与 `canvas.edge.*`。
+
+已登记外部客户端（`caller=external`），以及只出示 owner 凭据的 CLI，在下面两种情况会被默认拒绝：多节点画布会丢失已有节点，或非空画布会被清空。响应为 HTTP 412、`reason=full_document_replace_required`。文案说明这是整份 CAS 覆盖，并给出当前、提交和将删除的节点数。确要整布替换时，在操作参数顶层传入 `allowFullDocumentReplace: true`（与 `document` 同级）。PUT 则把同一字段放在 `project` 同级。写进 `document` 或 `project` 正文不会生效，也不会被当成确认。服务端会记录节点数量和是否显式确认，不记录文档正文。
+
+保留全部现有节点 ID 的提交（就地修改或追加）不需要该标志。桌面编辑器的正常保存走手工身份，用户删除节点后仍可直接提交。内置助手的完全访问模式仍可提交整份文档，并保留整轮撤销；当前画布模式继续拒绝该操作。细粒度节点操作和生成 propose/confirm 不经过这道检查。2026-10-17 的事故是外部脚本把只含 1 个节点的 `document.nodes` 当成补丁调用 `canvas.document.commit`，一张 149 个节点的画布被覆盖成 1 个节点。不要用 `document.commit` 修改 viewport。
+
 ### 助手回合归属
 
 内置助手宿主调用 `/ops/:op` 时出示自己的宿主凭据 `X-Beeftv-Agent-Token`（由后端注入宿主进程，页面与

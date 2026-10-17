@@ -627,7 +627,8 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 5<<20)
 		var req struct {
-			Project json.RawMessage `json:"project"`
+			Project                  json.RawMessage `json:"project"`
+			AllowFullDocumentReplace bool            `json:"allowFullDocumentReplace"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			fail(c, http.StatusBadRequest, err)
@@ -639,6 +640,12 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 		if json.Unmarshal(req.Project, &identity) != nil || identity.ID != c.Param("id") {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("画布 ID 与请求路径不一致"))
 			return
+		}
+		if _, external := externalBusiness(c); external {
+			if err := svc.GuardExternalCanvasPayloadReplace(user.ID, c.Param("id"), req.Project, req.AllowFullDocumentReplace); err != nil {
+				failService(c, err)
+				return
+			}
 		}
 		var audit struct {
 			Revision    *int64            `json:"revision"`

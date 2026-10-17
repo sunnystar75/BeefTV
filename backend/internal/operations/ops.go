@@ -57,8 +57,8 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.script.row.remove", Summary: "按行 ID 批量删除分镜行并重排镜号（未知行整批拒绝）", Scope: ScopeCanvas,
 		Params:  storyboardRowRemoveSchema(),
 		Handler: opStoryboardRowRemove})
-	r.Register(Op{ReplaySafe: true, ID: "canvas.document.commit", Summary: "按已知服务端 revision 提交整份画布文档（保留未触及字段，带 CAS）", Scope: ScopeCanvas,
-		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer"},"document":{"type":"object"}},"required":["canvasId","expectedRevision","document"]}`),
+	r.Register(Op{ReplaySafe: true, ID: "canvas.document.commit", Summary: "整份画布 CAS 覆盖（document.nodes 替换全部节点，不是局部 upsert）。外部或 owner CLI 若会删除已有节点，必须在顶层传 allowFullDocumentReplace=true；绑定请用 canvas.node.*", Scope: ScopeCanvas,
+		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer"},"allowFullDocumentReplace":{"type":"boolean","description":"显式确认整份节点替换。外部 CLI/MCP 与 owner 凭据调用在提交的 nodes 会删除已有节点时必须为 true。手工界面保存不需要。该字段与 document 同级，写进 document 正文不会生效。"},"document":{"type":"object","description":"顶层文档覆盖。出现 nodes 时整表替换节点，不是按节点 upsert。未出现的顶层字段保持原样。"}},"required":["canvasId","expectedRevision","document"]}`),
 		Handler: opCanvasDocumentCommit})
 	// 付费生成只提议不执行：这里校验目标并给出用户要确认的模型，真正的生成由界面在用户确认后发起。
 	r.Register(Op{AssistantProposal: true, AssistantCanvas: true, ID: "canvas.generation.propose", Summary: "提议对选中节点做付费图片/视频生成（只登记提议，不生成、不扣费）", ReadOnly: true, Scope: ScopeCanvas,
@@ -439,9 +439,10 @@ func opCanvasNodesCreate(ctx *Context, params json.RawMessage) (any, error) {
 
 func opCanvasDocumentCommit(ctx *Context, params json.RawMessage) (any, error) {
 	var args struct {
-		CanvasID         string          `json:"canvasId"`
-		ExpectedRevision *int64          `json:"expectedRevision"`
-		Document         json.RawMessage `json:"document"`
+		CanvasID                 string          `json:"canvasId"`
+		ExpectedRevision         *int64          `json:"expectedRevision"`
+		AllowFullDocumentReplace bool            `json:"allowFullDocumentReplace"`
+		Document                 json.RawMessage `json:"document"`
 	}
 	if err := decodeParams(params, &args); err != nil {
 		return nil, err
@@ -457,6 +458,9 @@ func opCanvasDocumentCommit(ctx *Context, params json.RawMessage) (any, error) {
 	}
 	if len(args.Document) == 0 || strings.TrimSpace(string(args.Document)) == "null" {
 		return nil, InvalidArg("invalid_params", "document 必填")
+	}
+	if err := guardCanvasDocumentReplace(ctx, args.CanvasID, args.Document, args.AllowFullDocumentReplace); err != nil {
+		return nil, err
 	}
 	summary, _, err := ctx.Domain.CommitUserCanvasDocument(ctx.UserID, args.CanvasID, *args.ExpectedRevision, args.Document)
 	if err != nil {

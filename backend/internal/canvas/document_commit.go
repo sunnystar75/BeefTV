@@ -14,6 +14,9 @@ import (
 // CommitUserCanvasDocument 把调用方给出的顶层文档覆盖应用到已存在的画布。
 // 这不是建画布，也不是任意数据库补丁：只覆盖 overlay 里出现的顶层字段，
 // 当前文档里未触及的键保持原样；身份、revision 与视口仍由服务端裁决。
+// document.nodes 一旦出现就是整表替换，不是按节点 upsert。外部残缺提交的默认拒绝
+// 不在这里：canvas.node.delete 等细粒度操作也会提交合并后的整份文档。
+// 那道门禁在 operations.guardCanvasDocumentReplace 与外部 PUT 守卫。
 func (s *Service) CommitUserCanvasDocument(userID, canvasID string, expectedRevision int64, document json.RawMessage) (UserDataSummary, json.RawMessage, error) {
 	canvasID = strings.TrimSpace(canvasID)
 	if canvasID == "" {

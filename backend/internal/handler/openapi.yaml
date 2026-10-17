@@ -321,7 +321,10 @@ paths:
     put:
       tags: [canvas]
       summary: 按 revision 保存画布内容
-      description: 新建传 revision 0，更新传读取到的版本；成功原子加 1。忽略客户端 viewport 和 remoteContentHash，updatedAt 由服务端生成。
+      description: >
+        新建传 revision 0，更新传读取到的版本；成功原子加 1。忽略客户端 viewport 和 remoteContentHash，updatedAt 由服务端生成。
+        这是整份正文替换，不是局部 upsert。外部业务调用若提交的 nodes 会删除已有节点或清空画布，默认 HTTP 412、reason=full_document_replace_required。
+        确要整布替换时在 project 同级传 allowFullDocumentReplace=true。绑定和局部修改请用 canvas.node.* 操作。
       requestBody:
         required: true
         content:
@@ -330,6 +333,9 @@ paths:
               type: object
               required: [project]
               properties:
+                allowFullDocumentReplace:
+                  type: boolean
+                  description: 外部调用显式确认整份节点替换。与 project 同级；写进 project 正文无效。桌面编辑器保存不需要。
                 project:
                   type: object
                   required: [id, revision]
@@ -344,6 +350,8 @@ paths:
           description: 请求、版本或素材引用不合法
         "409":
           description: 版本或资源状态冲突，原内容未被覆盖；保留草稿后加载最新版
+        "412":
+          description: 外部调用的 nodes 会缩小画布，且未传 allowFullDocumentReplace。reason=full_document_replace_required
         "428":
           description: 缺少 revision，需刷新客户端并重新读取
   /canvas-projects/{id}/history:

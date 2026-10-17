@@ -171,10 +171,11 @@ func resolveCaller(c *gin.Context, svc *app.Service, clients *agentops.ClientReg
 		if !found {
 			return agentops.Caller{}, "", errUnknownClient
 		}
-		return agentops.Caller{Kind: agentops.CallerExternal, ReadOnly: reg.Mode == agentops.ClientReadOnly}, reg.Label, nil
+		return agentops.Caller{Kind: agentops.CallerExternal, ReadOnly: reg.Mode == agentops.ClientReadOnly, GuardFullDocumentReplace: true}, reg.Label, nil
 	}
+	// owner 凭据是 CLI 可信通道，不是桌面编辑器。编辑器只带桌面令牌，整页保存不受删节点门禁影响。
 	if agentops.OwnerTokenMatches(svc.DataDir(), strings.TrimSpace(c.GetHeader("X-Beeftv-Owner"))) {
-		return agentops.Caller{Kind: agentops.CallerManual}, "owner", nil
+		return agentops.Caller{Kind: agentops.CallerManual, GuardFullDocumentReplace: true}, "owner", nil
 	}
 	if trustedDesktopUI(c) {
 		return agentops.Caller{Kind: agentops.CallerManual}, "desktop-ui", nil
