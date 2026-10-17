@@ -65,7 +65,30 @@ func SelectTaskModel(req TaskSelectRequest, lookup TaskSelectLookup) (TaskSelect
 		}
 		return TaskSelectResult{Input: resolved}, nil
 	}
-	return TaskSelectResult{Input: input}, nil
+	return TaskSelectResult{Input: applyNativeDeepSeekRequestModel(input)}, nil
+}
+
+func applyNativeDeepSeekRequestModel(input map[string]any) map[string]any {
+	config, ok := input["config"].(map[string]any)
+	if !ok {
+		return input
+	}
+	channelID := admissionString(config["channelId"])
+	credentialRef := admissionString(config["credentialRef"])
+	baseURL := admissionString(config["baseUrl"])
+	rewrite := func(key string) {
+		current := admissionString(config[key])
+		if current == "" {
+			return
+		}
+		mapped := ApplyNativeDeepSeekUpstreamModel(channelID, credentialRef, baseURL, current)
+		if mapped != current {
+			config[key] = mapped
+		}
+	}
+	rewrite("model")
+	rewrite("providerModelKey")
+	return input
 }
 
 // ResolveSystemChannelModelSelection rebuilds protocol, capability, execution
@@ -188,10 +211,10 @@ func ResolveSystemChannelModelSelection(input map[string]any, taskType string, o
 	nextConfig["channelModelKey"] = channelModel.ModelKey
 	if variant != nil {
 		nextConfig["variantId"] = variant.ID
-		nextConfig["providerModelKey"] = kernel.FirstNonEmpty(variant.ProviderModelKey, channelModel.ProviderModelKey, channelModel.ModelKey)
+		nextConfig["providerModelKey"] = ApplyNativeDeepSeekUpstreamModel(channel.ID, "", channel.BaseURL, kernel.FirstNonEmpty(variant.ProviderModelKey, channelModel.ProviderModelKey, channelModel.ModelKey))
 	} else {
 		delete(nextConfig, "variantId")
-		nextConfig["providerModelKey"] = kernel.FirstNonEmpty(channelModel.ProviderModelKey, channelModel.ModelKey)
+		nextConfig["providerModelKey"] = ApplyNativeDeepSeekUpstreamModel(channel.ID, "", channel.BaseURL, kernel.FirstNonEmpty(channelModel.ProviderModelKey, channelModel.ModelKey))
 	}
 	nextConfig["interfaceType"] = string(channelModel.Protocol)
 	nextConfig["apiFormat"] = ChannelAPIFormatForProtocol(channel.APIFormat, channelModel.Protocol)

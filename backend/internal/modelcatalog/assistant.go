@@ -21,6 +21,8 @@ var assistantProtocols = map[string]string{
 	"claude-api":      "claude-api",
 	"responses":       "responses",
 	"openai-response": "responses",
+	// 官方 DeepSeek Chat 插件与 OpenAI chat completions 同线，助手按该适配器发送。
+	"deepseek-chat": "chat-completion",
 }
 
 var managedAssistantModels = []string{beefapi.DefaultManagedAssistantModel, "claude-opus-5-5", "deepseek-v4.1-flash", "glm-5.3", "gemini-3.8-flash"}
@@ -113,6 +115,10 @@ func ResolveAssistantChannelModel(snapshot AssistantConfigSnapshot, modelKey str
 		return assistant.Provider{}, AssistantReasonModelNotConfigured
 	}
 	modelID = assistantModelAlias(channel, modelID)
+	upstream := ApplyNativeDeepSeekUpstreamModel(channel.ID, channel.CredentialRef, firstNonEmptyAssistantBaseURL(channel.BaseURL, snapshot.BaseURL), modelID)
+	if !assistantChannelHasModel(channel, modelID) && upstream != modelID && assistantChannelHasModel(channel, upstream) {
+		modelID = upstream
+	}
 	if !assistantChannelHasModel(channel, modelID) {
 		return assistant.Provider{}, AssistantReasonModelNotConfigured
 	}
@@ -129,8 +135,14 @@ func ResolveAssistantChannelModel(snapshot AssistantConfigSnapshot, modelKey str
 		}
 	}
 	protocol, protocolOK := ChannelModelProtocol(channel, modelID)
+	if !protocolOK && upstream != modelID {
+		protocol, protocolOK = ChannelModelProtocol(channel, upstream)
+	}
 	if !protocolOK {
 		protocol, protocolOK = defaultTextModelProtocol(snapshot, channel, modelID)
+	}
+	if !protocolOK && upstream != modelID {
+		protocol, protocolOK = defaultTextModelProtocol(snapshot, channel, upstream)
 	}
 	if !protocolOK {
 		return assistant.Provider{}, AssistantReasonModelNotConfigured
@@ -156,6 +168,7 @@ func ResolveAssistantChannelModel(snapshot AssistantConfigSnapshot, modelKey str
 			}
 		}
 	}
+	provider.Model = ApplyNativeDeepSeekUpstreamModel(channel.ID, channel.CredentialRef, provider.BaseURL, provider.Model)
 	if provider.APIKey == "" {
 		return assistant.Provider{}, AssistantReasonCredentialMissing
 	}
@@ -178,7 +191,7 @@ func FindAssistantChannel(channels []AssistantChannel, channelID, modelID string
 		if !channel.Enabled {
 			continue
 		}
-		if assistantChannelHasModel(channel, assistantModelAlias(channel, modelID)) {
+		if assistantChannelHasModel(channel, assistantModelAlias(channel, modelID)) || nativeDeepSeekChannelListsUpstream(channel, modelID) {
 			return channel, true
 		}
 	}
@@ -235,6 +248,21 @@ func ChannelModelProtocol(channel AssistantChannel, modelID string) (string, boo
 		return normalized, true
 	}
 	return "", false
+}
+
+func nativeDeepSeekChannelListsUpstream(channel AssistantChannel, modelID string) bool {
+	alias := assistantModelAlias(channel, modelID)
+	upstream := ApplyNativeDeepSeekUpstreamModel(channel.ID, channel.CredentialRef, channel.BaseURL, alias)
+	return upstream != alias && assistantChannelHasModel(channel, upstream)
+}
+
+func firstNonEmptyAssistantBaseURL(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func AssistantChannelName(channel AssistantChannel) string {

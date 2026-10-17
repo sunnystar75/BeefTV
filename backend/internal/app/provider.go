@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
+	"infinite-canvas/backend/internal/modelcatalog"
 	"strconv"
 	"strings"
 
@@ -447,7 +448,7 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 		if _, err := ValidateOutboundURL(config.BaseURL); err != nil {
 			return providerConfig{}, err
 		}
-		return config, nil
+		return applyNativeDeepSeekProviderModel(config), nil
 	}
 	channel, err := s.SystemChannel(channelID)
 	if err != nil {
@@ -501,7 +502,7 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 		if !matched {
 			return providerConfig{}, errors.New("当前模型规格已更新，请重新创建任务")
 		}
-	} else if !trustedSystemModelIdentity(modelKey, requestedModel, providerModelKey, authorizedUpstream) {
+	} else if !trustedSystemModelIdentity(modelKey, requestedModel, providerModelKey, authorizedUpstream) && !modelcatalog.NativeDeepSeekModelKeyTrusted(channel.ID, channel.BaseURL, modelKey, authorizedUpstream, requestedModel, providerModelKey) {
 		return providerConfig{}, errors.New("系统渠道模型标识不一致")
 	}
 	config.InterfaceType = string(channelModel.Protocol)
@@ -516,7 +517,17 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 	config.ChannelModelKey = modelKey
 	config.ProviderModelKey = providerModelKey
 	config.Model = firstNonEmpty(providerModelKey, channelModel.ProviderModelKey, modelKey)
-	return config, nil
+	return applyNativeDeepSeekProviderModel(config), nil
+}
+
+func applyNativeDeepSeekProviderModel(config providerConfig) providerConfig {
+	mapped := modelcatalog.ApplyNativeDeepSeekUpstreamModel(config.ChannelID, "", config.BaseURL, config.Model)
+	if mapped == config.Model {
+		return config
+	}
+	config.Model = mapped
+	config.ProviderModelKey = mapped
+	return config
 }
 
 // channelAPIFormatForProtocol 以模型协议而不是客户端缓存决定鉴权和请求封装格式。

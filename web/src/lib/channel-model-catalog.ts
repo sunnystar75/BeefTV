@@ -3,6 +3,7 @@ import { modelProtocolCapability, protocolForModelCatalog, protocolForBeefAPICat
 import type { ModelChannel } from "@/stores/use-config-store";
 import { isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
+import { annotateNativeDeepSeekCatalogItem, isNativeDeepSeekChannel, NATIVE_DEEPSEEK_FLASH_LABEL } from "@/lib/deepseek-native";
 import { sanitizeVideoPriceQuote, seedancePortraitModel, type VideoPriceQuote } from "@/lib/seedance-portrait";
 
 export type ChannelModelCatalogOption = { value: string; label?: string };
@@ -141,7 +142,9 @@ function isBeefAPICatalogChannel(channel: ModelChannel) {
 export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog: ChannelModelCatalogItem[]): ChannelModelProfile[] {
     const existingByModel = new Map((channel.modelProfiles || []).map((profile) => [profile.model, profile]));
     const next: ChannelModelProfile[] = [];
-    for (const item of catalog) {
+    for (const rawItem of catalog) {
+        const item = annotateNativeDeepSeekCatalogItem(channel, rawItem);
+        const nativeFlash = isNativeDeepSeekChannel(channel) && item.id === "deepseek-flash";
         const existing = existingByModel.get(item.id);
         const mapped = catalogModelMapping(item, { providerNameFallback: isBeefAPICatalogChannel(channel) });
         const inferredProtocol = mapped.protocol || (isBeefAPICatalogChannel(channel) ? protocolForBeefAPICatalog(item.supportedEndpointTypes) : protocolForModelCatalog(item.supportedEndpointTypes));
@@ -171,7 +174,7 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
             next.push({
                 ...existing,
                 ...(item.videoPricing !== undefined || existing.videoPricing !== undefined || seedancePortraitModel(item.id) ? { videoPricing: sanitizeVideoPriceQuote(item.videoPricing) } : {}),
-                ...(item.displayName ? { displayName: item.displayName } : {}),
+                ...(item.displayName ? { displayName: item.displayName } : nativeFlash && !existing.displayName ? { displayName: NATIVE_DEEPSEEK_FLASH_LABEL } : {}),
                 capability,
                 ...(protocol ? { protocol } : {}),
                 ...(patchCapabilityConfig || capabilityChanged || sourcedVideo || keepSourced ? { capabilityConfig } : {}),
@@ -180,8 +183,10 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
             continue;
         }
 
-        const capability = inferredCapability || modelProtocolCapability(channel.interfaceType);
-        const protocol = inferredProtocol || protocolTemplateForNewCatalogModel(capability, channel.interfaceType);
+        const capability = nativeFlash ? "text" : inferredCapability || modelProtocolCapability(channel.interfaceType);
+        const protocol = nativeFlash && (channel.interfaceType === "deepseek-chat" || channel.interfaceType === "chat-completion")
+            ? channel.interfaceType
+            : inferredProtocol || protocolTemplateForNewCatalogModel(capability, channel.interfaceType);
         if (!protocol || !capability) continue;
         const sourcedVideo = capability === "video" ? catalogVideo : null;
         const capabilityConfig = sourcedVideo
