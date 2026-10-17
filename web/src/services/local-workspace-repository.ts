@@ -11,6 +11,7 @@ import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope, isUserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
+import { canvasViewportSeq, mergeCanvasViewportPreference } from "@/lib/canvas/canvas-viewport-preference";
 import { canvasUnconfirmedReason, canvasUnconfirmedDiagnostic, type CanvasUnconfirmedState } from "@/lib/canvas/canvas-unconfirmed-edits";
 import { rebaseCanvasDocumentThreeWay, settleInFlightGenerationOverlay } from "@/lib/canvas/canvas-document-rebase";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
@@ -290,6 +291,16 @@ export function selectPreferredCanvasProject(local: CanvasProject | null | undef
 function pauseForExternalCandidate(id: string, remote: CanvasProject, scope: string) {
     applyExternalCanvasRevision(remote, { hasUnsyncedEdits: true, scope });
     pauseCanvasBackendSubmit(id, scope);
+}
+
+// 未确认的节点编辑会挡住整份外部文档，但显式视口操作不改节点图，仍然推进相机。
+function adoptRemoteCanvasViewport(id: string, remote: CanvasProject) {
+    const local = openLocalCanvasProject(id);
+    if (!local || canvasViewportSeq(remote) <= canvasViewportSeq(local)) return;
+    const chosen = mergeCanvasViewportPreference(local, remote);
+    useCanvasStore.getState().updateProject(id, { viewport: chosen.viewport, viewportSeq: chosen.viewportSeq });
+    const next = openLocalCanvasProject(id);
+    if (next) notifyCanvasRefresh(next, local);
 }
 
 /**
@@ -969,6 +980,7 @@ export async function refreshLocalCanvasProjectIfChanged(id: string, expectedSco
             // 相同或更旧的快照不能把尚未自动保存的编辑标成外部冲突。
             if (journal?.confirmedSnapshot && typeof remote.revision === "number" && remote.revision <= journal.confirmedRevision) return undefined;
             if (hasUnconfirmedCanvasEdits(id) || canvasSubmitBlocked(id, scope)) {
+                adoptRemoteCanvasViewport(id, remote);
                 pauseForExternalCandidate(id, remote, scope);
                 return undefined;
             }

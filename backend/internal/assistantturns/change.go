@@ -245,7 +245,7 @@ func MatchesChange(before, after map[string]any, change *Change) bool {
 		}
 		remaining[field.name] = before[field.name]
 	}
-	for _, key := range []string{"revision", "updatedAt", "remoteContentHash"} {
+	for _, key := range []string{"revision", "updatedAt", "remoteContentHash", "viewport", "viewportSeq"} {
 		if value, exists := before[key]; exists {
 			remaining[key] = value
 		} else {
@@ -321,7 +321,7 @@ func (s *Service) declareDocumentChanges(tx *gorm.DB, rec Record, change *Change
 			keys[k] = true
 		}
 		for k := range keys {
-			if !reflect.DeepEqual(before[k], after[k]) && k != "revision" && k != "updatedAt" && k != "remoteContentHash" {
+			if !reflect.DeepEqual(before[k], after[k]) && k != "revision" && k != "updatedAt" && k != "remoteContentHash" && k != "viewport" && k != "viewportSeq" {
 				c.UpdatedFields = append(c.UpdatedFields, k)
 			}
 		}

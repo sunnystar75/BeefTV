@@ -1,3 +1,4 @@
+import { mergeCanvasViewportPreference } from "@/lib/canvas/canvas-viewport-preference";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
@@ -6,7 +7,7 @@ export type CanvasDocumentRebaseResult = {
     conflict: boolean;
 };
 
-const VIEW_PREFERENCE_KEYS = new Set(["viewport", "appearance", "backgroundMode", "showImageInfo"]);
+const VIEW_PREFERENCE_KEYS = new Set(["viewport", "viewportSeq", "appearance", "backgroundMode", "showImageInfo"]);
 const SERVER_OWNED_KEYS = new Set(["revision", "updatedAt", "remoteContentHash", "createdAt"]);
 const ENTITY_LIST_KEYS = new Set(["nodes", "connections", "chatSessions"]);
 const SKIP_GENERIC_KEYS = new Set(["id", ...VIEW_PREFERENCE_KEYS, ...SERVER_OWNED_KEYS, ...ENTITY_LIST_KEYS]);
@@ -264,6 +265,7 @@ export function rebaseCanvasDocumentThreeWay(input: {
         Object.fromEntries(Object.entries(input.remote).filter(([key]) => !SKIP_GENERIC_KEYS.has(key))),
         conflict,
     );
+    const view = mergeCanvasViewportPreference(input.local, input.remote);
     const project: CanvasProject = {
         ...input.remote,
         ...generic,
@@ -272,7 +274,8 @@ export function rebaseCanvasDocumentThreeWay(input: {
         nodes: mergeEntityList<CanvasNodeData>(input.base.nodes, input.local.nodes, input.remote.nodes, conflict, sameNodeIgnoringTimestamps),
         connections: mergeEntityList<CanvasConnection>(input.base.connections, input.local.connections, input.remote.connections, conflict),
         chatSessions: mergeEntityList(input.base.chatSessions, input.local.chatSessions, input.remote.chatSessions, conflict),
-        viewport: input.local.viewport || input.remote.viewport,
+        viewport: view.viewport,
+        viewportSeq: view.viewportSeq,
         appearance: input.local.appearance || input.remote.appearance,
         backgroundMode: input.local.backgroundMode || input.remote.backgroundMode,
         showImageInfo: input.local.showImageInfo,

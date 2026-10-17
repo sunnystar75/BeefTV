@@ -94,7 +94,7 @@ export function assertRestoredCanvasMatches(intended: Partial<CanvasProject> & P
         if (["revision", "createdAt", "updatedAt", "remoteContentHash"].includes(key)) continue;
         // Canonical document commits exclude viewport; the client retains this
         // local view preference. Browser-cache readback must still preserve it.
-        if (storage === "backend" && key === "viewport") continue;
+        if (storage === "backend" && (key === "viewport" || key === "viewportSeq")) continue;
         const actual = saved[key as keyof CanvasProject];
         if (value === undefined && (actual === undefined || actual === null || actual === "")) continue;
         if (canonicalize(value) !== canonicalize(actual)) throw new Error("画布内容未完整保存到工作区");

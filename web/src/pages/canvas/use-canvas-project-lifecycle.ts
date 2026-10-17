@@ -1,4 +1,5 @@
 import { mergeCanvasRefreshPatch } from "@/lib/canvas/canvas-patch-merge";
+import { canvasViewportSeq, incomingCanvasViewport } from "@/lib/canvas/canvas-viewport-preference";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { App } from "antd";
@@ -109,6 +110,7 @@ export function useCanvasProjectLifecycle({
     const [loadError, setLoadError] = useState("");
     const [loadAttempt, setLoadAttempt] = useState(0);
     const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const viewportSeqRef = useRef(0);
 
     const observedContentRef = useRef<CanvasHistorySnapshot | null>(null);
     const observedAtRender = observedContentRef.current;
@@ -172,6 +174,7 @@ export function useCanvasProjectLifecycle({
             activeChatIdRef.current = snapshot.activeChatId;
             nodesRef.current = snapshot.nodes;
             connectionsRef.current = snapshot.connections;
+            viewportSeqRef.current = canvasViewportSeq(targetProject);
             viewportRef.current = targetProject.viewport;
             setNodes(snapshot.nodes);
             setConnections(snapshot.connections);
@@ -272,6 +275,12 @@ export function useCanvasProjectLifecycle({
 
     useEffect(() => subscribeCanvasRefresh((project, previous) => {
         if (!projectLoaded || editorProjectIdRef.current !== projectId || project.id !== projectId) return;
+        const incoming = incomingCanvasViewport(viewportSeqRef.current, project);
+        if (incoming) {
+            viewportSeqRef.current = incoming.seq;
+            viewportRef.current = incoming.viewport;
+            setViewport(incoming.viewport);
+        }
         // Merge only server-changed fields so dragging/editing other nodes can
         // continue while Agent media tasks complete. Same-field conflicts fail.
         let merged: CanvasProject;
@@ -301,7 +310,7 @@ export function useCanvasProjectLifecycle({
         setConnections(merged.connections);
         // 外部投影不是用户手工编辑：采用为历史基线，Ctrl+Z 不会倒退外部新值。
         adoptExternalSnapshot({ nodes: merged.nodes, connections: merged.connections });
-    }), [adoptExternalSnapshot, projectId, projectLoaded, nodesRef, connectionsRef, setNodes, setConnections]);
+    }), [adoptExternalSnapshot, projectId, projectLoaded, nodesRef, connectionsRef, setNodes, setConnections, setViewport, viewportRef]);
 
     useEffect(() => {
         if (!projectLoaded || editorProjectIdRef.current !== projectId || historyPausedRef.current) return;

@@ -1,3 +1,4 @@
+import { mergeCanvasViewportPreference } from "@/lib/canvas/canvas-viewport-preference";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 
 export type CanvasExternalRevisionDecision =
@@ -25,13 +26,15 @@ export function decideExternalCanvasRevision(input: {
 }
 
 /**
- * 外部文档是服务端权威内容，但视口与画布外观属于本机查看偏好，
- * 服务端不持久化它们；套用外部 revision 时保留本地视角，避免画面跳动。
+ * 外部文档是服务端权威内容。普通写入不改视口，套用时保留本机视角。
+ * viewportSeq 只由视口操作递增；更高的序号表示一次显式对准或设视角。
  */
 function mergeExternalCanvasRevision(remote: CanvasProject, local: CanvasProject): CanvasProject {
+    const view = mergeCanvasViewportPreference(local, remote);
     return {
         ...remote,
-        viewport: local.viewport || remote.viewport,
+        viewport: view.viewport,
+        viewportSeq: view.viewportSeq,
         appearance: local.appearance || remote.appearance,
         backgroundMode: local.backgroundMode || remote.backgroundMode,
     };

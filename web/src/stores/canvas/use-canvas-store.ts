@@ -40,6 +40,8 @@ export type CanvasProject = {
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
     viewport: ViewportTransform;
+    /** 只由视口操作递增。更高的序号表示服务端有一次显式对准或设视角。 */
+    viewportSeq?: number;
     directorScenes: DirectorScene[];
     timeline?: TimelineProject;
 };
@@ -72,7 +74,7 @@ type CanvasStore = {
     deleteProjects: (ids: string[]) => void;
     restoreProject: (project: CanvasProject) => void;
     replaceProjects: (projects: CanvasProject[]) => void;
-    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "workspaceProjectId" | "projectId" | "folderId" | "title" | "canvasTitle" | "nodes" | "connections" | "chatSessions" | "activeChatId" | "starterMode" | "appearance" | "backgroundMode" | "showImageInfo" | "viewport" | "directorScenes" | "timeline">>) => void;
+    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "workspaceProjectId" | "projectId" | "folderId" | "title" | "canvasTitle" | "nodes" | "connections" | "chatSessions" | "activeChatId" | "starterMode" | "appearance" | "backgroundMode" | "showImageInfo" | "viewport" | "viewportSeq" | "directorScenes" | "timeline">>) => void;
 };
 
 export const CANVAS_FOLDERS_KEY = "infinite-canvas:canvas_folders";
@@ -849,7 +851,7 @@ export const useCanvasStore = create<CanvasStore>()(
                 if (!current) return state;
                 const next = { ...current, ...patch };
                 const contentChanged = !sameCanvasContent(current, next);
-                if (!contentChanged && samePersistenceValue(current.viewport, next.viewport)) return state;
+                if (!contentChanged && samePersistenceValue(current.viewport, next.viewport) && (current.viewportSeq ?? 0) === (next.viewportSeq ?? 0)) return state;
                 if (patch.connections && current.connections.length !== patch.connections.length) traceCanvasGraph("store.updateProject", { previous: current, next });
                 if (contentChanged) next.updatedAt = new Date().toISOString();
                 return { projects: state.projects.map((project) => project === current ? next : project) };

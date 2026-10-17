@@ -1305,6 +1305,112 @@
     "replay": "safe"
   },
   {
+    "id": "canvas.viewport.fit",
+    "summary": "只移动画布视角：对准全部可见节点、指定节点或包围盒，或直接设置 {x,y,k}。不修改节点图，也不能代替 canvas.document.commit",
+    "readOnly": false,
+    "scope": "canvas",
+    "params": {
+      "additionalProperties": false,
+      "properties": {
+        "bbox": {
+          "additionalProperties": false,
+          "properties": {
+            "bottom": {
+              "type": "number"
+            },
+            "left": {
+              "type": "number"
+            },
+            "right": {
+              "type": "number"
+            },
+            "top": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "left",
+            "top",
+            "right",
+            "bottom"
+          ],
+          "type": "object"
+        },
+        "canvasId": {
+          "type": "string"
+        },
+        "expectedRevision": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxScale": {
+          "type": "number"
+        },
+        "nodeIds": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 200,
+          "type": "array"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        },
+        "padding": {
+          "type": "number"
+        },
+        "viewport": {
+          "additionalProperties": false,
+          "properties": {
+            "k": {
+              "type": "number"
+            },
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "k"
+          ],
+          "type": "object"
+        },
+        "viewportSize": {
+          "additionalProperties": false,
+          "properties": {
+            "height": {
+              "type": "number"
+            },
+            "width": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "width",
+            "height"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "canvasId",
+        "expectedRevision",
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [
+      "full-access",
+      "canvas"
+    ],
+    "replay": "safe"
+  },
+  {
     "id": "conversation.message.attach",
     "summary": "把已交付的任务产物绑定到原对话消息（校验归属与就绪资源，带 revision CAS，幂等回执）",
     "readOnly": false,

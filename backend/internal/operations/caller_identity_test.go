@@ -228,17 +228,24 @@ func TestAssistantCannotUseWorkspaceWideOps(t *testing.T) {
 		t.Fatalf("助手执行 asset.list 应被拒: %v", err)
 	}
 	manual := h.registry.List(operations.ManualCaller(false))
-	if len(manual) != 33 {
-		t.Fatalf("手工 UI 应看到完整 33 项能力: %d", len(manual))
+	if len(manual) != 34 {
+		t.Fatalf("手工 UI 应看到完整 34 项能力: %d", len(manual))
 	}
 	foundDocumentCommit := false
+	foundViewportFit := false
 	for _, descriptor := range manual {
 		if descriptor.ID == "canvas.document.commit" {
 			foundDocumentCommit = true
 		}
+		if descriptor.ID == "canvas.viewport.fit" {
+			foundViewportFit = true
+		}
 	}
 	if !foundDocumentCommit {
 		t.Fatal("手工 UI 必须看到 canvas.document.commit")
+	}
+	if !foundViewportFit {
+		t.Fatal("手工 UI 必须看到 canvas.viewport.fit")
 	}
 	if len(manual) <= len(visible) {
 		t.Fatalf("手工 UI 应看到完整能力: %d <= %d", len(manual), len(visible))

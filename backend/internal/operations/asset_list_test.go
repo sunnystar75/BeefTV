@@ -54,6 +54,9 @@ func (unusedDomain) ConnectUserCanvasNodesAtRevision(string, string, string, str
 func (unusedDomain) CommitUserCanvasDocument(string, string, int64, json.RawMessage) (canvas.UserDataSummary, json.RawMessage, error) {
 	panic("unused")
 }
+func (unusedDomain) SetUserCanvasViewport(string, string, int64, canvas.ViewportCommand) (canvas.ViewportResult, error) {
+	panic("unused")
+}
 func (unusedDomain) WorkspaceTask(string, string) (*model.Task, error) { panic("unused") }
 func (unusedDomain) GenerationOutputs(string) ([]localtask.CanonicalOutput, error) {
 	panic("unused")

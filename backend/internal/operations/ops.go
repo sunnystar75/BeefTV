@@ -17,6 +17,7 @@ import (
 // 未经参数与费用风险验收的能力明确不注册，而不是提供 stub 伪成功。
 func RegisterDefaultOps(r *Registry) {
 	registerCanvasEditOps(r)
+	registerCanvasViewportOps(r)
 	registerCanvasNodeBindAsset(r)
 	registerModelCatalogOp(r)
 	registerMediaOps(r)
