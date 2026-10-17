@@ -57,15 +57,16 @@ export type AssistantTurnChange = {
 
 export type AssistantCanvasChange = Omit<AssistantTurnChange, "canvasChanges"> & { canvasId: string; operationIds: string[] };
 
-/** 付费生成提议：后端只登记，不生成、不扣费，执行发生在画布既有生成链路。 */
+/** 生成或白膜提议：后端只登记。图片和视频沿用画布生成链路；白膜由已打开的桌面导演台录制。 */
 export type AssistantGenerationProposal = {
     proposalId: string;
-    kind: "image" | "video";
+    kind: "image" | "video" | "director_preview";
     nodeIds: string[];
     model: string;
     modelKey: string;
+    charged?: boolean;
     note?: string;
-    source?: { canvasId: string; canvasRevision: number; modelConfigRevision: number };
+    source?: { canvasId: string; canvasRevision: number; modelConfigRevision?: number };
 };
 
 export type AgentTurnEnd = {

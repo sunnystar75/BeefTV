@@ -15,10 +15,14 @@ const CANVAS_NODE_UPDATE = 'canvas.node.update';
 // canvas.document.commit 提交的是整份文档，旧版本的整份文档会覆盖本轮刚写的内容，所以不改写。
 const REBASABLE_WRITES = new Set(['canvas.nodes.create', 'canvas.edge.create', CANVAS_NODE_UPDATE]);
 
+function isAssistantProposal(id) {
+  return id === 'canvas.generation.propose' || id === 'director.shot.export_preview';
+}
+
 function assertToolGeneration(generation, descriptor, signal) {
   if (generation.aborted || signal?.aborted) throw new Error('aborted');
-  if (generation.permissionMode === 'read-only' && (!descriptor.readOnly || descriptor.id === 'canvas.generation.propose')) throw new Error('scope_denied: 本轮助手只能读取');
-  if ((!descriptor.readOnly || descriptor.id === 'canvas.generation.propose') &&
+  if (generation.permissionMode === 'read-only' && (!descriptor.readOnly || isAssistantProposal(descriptor.id))) throw new Error('scope_denied: 本轮助手只能读取');
+  if ((!descriptor.readOnly || isAssistantProposal(descriptor.id)) &&
       (generation.pendingInput?.state === 'pending' || generation.pendingInputError || generation.modelEpoch !== generation.intentEpoch)) {
     throw new Error('turn_intent_changed: 已收到新的要求，先读取新要求再修改');
   }
@@ -135,6 +139,12 @@ export function createOperationBridge({
               throw new Error('invalid_params: 绑定产物需要有效任务、节点和输出序号');
             }
             opId = `attach-node:${params.taskId}:${params.nodeId}:${params.outputIndex}`;
+          }
+          if (descriptor.id === 'canvas.generation.confirm') {
+            const proposalId = typeof params.proposalId === 'string' ? params.proposalId.trim() : '';
+            if (!proposalId) throw new Error('invalid_params: 确认需要提案编号');
+            params.proposalId = proposalId;
+            opId = `confirm:${proposalId}`;
           }
         }
         let rebasedFrom;

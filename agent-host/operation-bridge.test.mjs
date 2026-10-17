@@ -69,6 +69,49 @@ describe('操作桥', () => {
     }
   });
 
+  test('白膜确认使用 confirm:提案编号，并丢掉模型自带的操作编号', async () => {
+    const seen = [];
+    const server = createServer(async (req, res) => {
+      res.setHeader('content-type', 'application/json');
+      if (req.url === '/ops') {
+        res.end(JSON.stringify({ code: 0, data: { ops: [
+          { id: 'canvas.generation.confirm', assistantModes: ['canvas'], replay: 'safe', readOnly: false,
+            params: { type: 'object', properties: { canvasId: { type: 'string' }, proposalId: { type: 'string' }, operationId: { type: 'string' } }, required: ['canvasId', 'proposalId'] } },
+          { id: 'director.shot.export_preview', assistantModes: ['canvas'], replay: 'safe', readOnly: true,
+            params: { type: 'object', properties: { canvasId: { type: 'string' }, nodeIds: { type: 'array' } }, required: ['canvasId', 'nodeIds'] } },
+        ] } }));
+        return;
+      }
+      let raw = '';
+      for await (const chunk of req) raw += chunk;
+      seen.push(JSON.parse(raw));
+      res.end(JSON.stringify({ code: 0, data: { replayed: false, result: { proposalId: 'gp-1', status: 'accepted' } } }));
+    });
+    const port = await listen(server);
+    try {
+      const bridge = createOperationBridge({ opsUrl: `http://127.0.0.1:${port}`, hostToken: 'test-only', turnBudgetContext: new AsyncLocalStorage() });
+      await bridge.loadDescriptors();
+      const turn = resetTurnAccumulator(newTurnAccumulator(), 1, 'turn-clay');
+      const generation = { aborted: false, permissionMode: 'canvas' };
+      const tools = bridge.buildTools('canvas-1', [], generation, turn, 'sess');
+      const confirm = tools.find((tool) => tool.label === 'canvas.generation.confirm');
+      await confirm.execute('call-1', { proposalId: ' gp-1 ', operationId: 'forged', kind: 'director_preview' });
+      expect(seen[0].opId).toBe('confirm:gp-1');
+      expect(seen[0].params.proposalId).toBe('gp-1');
+      expect(seen[0].params.operationId).toBeUndefined();
+      expect(seen[0].params.canvasId).toBe('canvas-1');
+      await expect(confirm.execute('call-2', {})).rejects.toThrow('invalid_params');
+      const preview = tools.find((tool) => tool.label === 'director.shot.export_preview');
+      await expect(preview.execute('call-3', { nodeIds: ['dir-1'] }, undefined)).resolves.toBeTruthy();
+      generation.permissionMode = 'read-only';
+      const readOnly = bridge.buildTools('canvas-1', [], generation, turn, 'sess');
+      expect(readOnly.some((tool) => tool.label === 'director.shot.export_preview')).toBe(false);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   test('schema 去掉 canvasId 与 operationId，引用画布读取可保留 canvasId', () => {
     const params = {
       type: 'object',

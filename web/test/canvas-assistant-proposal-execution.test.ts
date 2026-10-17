@@ -16,6 +16,19 @@ function input(overrides: Partial<Parameters<typeof executeAssistantProposal>[0]
         generate: async () => {}, markHandled: () => {}, notify: () => {}, ...overrides };
 }
 
+test("白膜提议不会进入付费生成", async () => {
+    const notices: string[] = [];
+    let submissions = 0;
+    await executeAssistantProposal(input({
+        proposal: { ...proposal, kind: "director_preview", model: "导演白膜", modelKey: "local::director-clay-preview" },
+        generate: async () => { submissions += 1; },
+        prepare: async () => { throw new Error("不应核对付费来源"); },
+        notify: (text) => { notices.push(text); },
+    }));
+    expect(submissions).toBe(0);
+    expect(notices).toEqual(["白膜导出由导演台在本机录制，不会提交付费生成。"]);
+});
+
 test("F02: confirmed proposal model reaches the generation execution boundary", async () => {
     let options: unknown;
     await executeAssistantProposal(input({ generate: async (_id, _mode, _prompt, received) => { options = received; } }));

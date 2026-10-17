@@ -91,8 +91,9 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 			return nil
 		}
 		return denied("只能读取当前画布或已在界面里引用的画布")
-	case "canvas.generation.propose":
+	case "canvas.generation.propose", "director.shot.export_preview":
 		// 写只允许落在当前画布：跨画布写即便带上合法 canvasId 也必须拒绝。
+		// 白膜提议同样只读登记，不能借它读或改其他画布。
 		if args.CanvasID == s.CanvasID {
 			return nil
 		}

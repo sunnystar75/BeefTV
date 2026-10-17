@@ -176,6 +176,84 @@
     "replay": "safe"
   },
   {
+    "id": "canvas.generation.confirm",
+    "summary": "确认一项生成或白膜提议。图片和视频不在这里创建付费任务；导演白膜通知已打开的桌面录制",
+    "readOnly": false,
+    "scope": "canvas",
+    "params": {
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "charged": {
+          "type": "boolean"
+        },
+        "kind": {
+          "enum": [
+            "image",
+            "video",
+            "director_preview"
+          ],
+          "type": "string"
+        },
+        "modelKey": {
+          "type": "string"
+        },
+        "nodeIds": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array"
+        },
+        "note": {
+          "type": "string"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        },
+        "proposalId": {
+          "type": "string"
+        },
+        "source": {
+          "properties": {
+            "canvasId": {
+              "type": "string"
+            },
+            "canvasRevision": {
+              "type": "integer"
+            },
+            "modelConfigRevision": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "canvasId",
+            "canvasRevision"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "proposalId",
+        "canvasId",
+        "nodeIds",
+        "kind",
+        "modelKey",
+        "source",
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [
+      "full-access",
+      "canvas"
+    ],
+    "replay": "safe"
+  },
+  {
     "id": "canvas.generation.propose",
     "summary": "提议对选中节点做付费图片/视频生成（只登记提议，不生成、不扣费）",
     "readOnly": true,
@@ -1260,6 +1338,40 @@
     },
     "assistantModes": [],
     "replay": "unsafe"
+  },
+  {
+    "id": "director.shot.export_preview",
+    "summary": "提议导出导演台白膜视频（只登记免费本地提议，不录制、不扣费）",
+    "readOnly": true,
+    "scope": "canvas",
+    "params": {
+      "type": "object",
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "nodeIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "maxItems": 8
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "canvasId",
+        "nodeIds"
+      ]
+    },
+    "assistantModes": [
+      "full-access",
+      "canvas"
+    ],
+    "replay": "safe"
   },
   {
     "id": "media.check",

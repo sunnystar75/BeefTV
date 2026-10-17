@@ -1,0 +1,47 @@
+---
+title: 导演白膜确认
+description: 用 CLI 提议并确认导演台白膜导出，由已打开的桌面录制
+---
+
+白膜是本机 WebGL 录制，不创建付费视频任务，也不走远程渲染。外部客户端用和图片/视频相同的 Client + Bearer 调用 `/api/ops/:op`，确认本身不需要 `X-Desktop-Token`。已打开对应画布的 BeefTV 桌面领取确认后，打开导演台并执行和点击「导出白膜」相同的录制，再把白膜视频放到画布上。
+
+## 调用顺序
+
+先读画布，确认目标节点类型是 `director`，记下 `canvasId` 和 `revision`。
+
+```bash
+beeftv ops call director.shot.export_preview --params '{"canvasId":"<canvasId>","nodeIds":["<directorNodeId>"]}'
+```
+
+这是只读登记。回执包含 `proposalId`、`kind: "director_preview"`、`modelKey: "local::director-clay-preview"`、`charged: false`、`local: true`，以及 `source.canvasId` 和 `source.canvasRevision`。此时还没有开始录制。
+
+再用回执里的提案编号确认。操作编号必须是 `confirm:<proposalId>`，和图片/视频确认相同：
+
+```bash
+beeftv ops call canvas.generation.confirm \
+  --operation-id "confirm:<proposalId>" \
+  --params '{"proposalId":"<proposalId>","canvasId":"<canvasId>","nodeIds":["<directorNodeId>"],"kind":"director_preview","modelKey":"local::director-clay-preview","charged":false,"source":{"canvasId":"<canvasId>","canvasRevision":<revision>}}'
+```
+
+接受时 `status` 为 `accepted`，`dispatched` 为 true，`taskCreated` 为 false，`charged` 仍为 false。相同操作编号重放返回原回执；桌面已经 ack 的确认不会再开第二段录制。进程重启后 ack 记录不保留，同一确认可以再次通知桌面。
+
+图片或视频确认也走 `canvas.generation.confirm`，但 `dispatched` 为 false，且不在这里创建任务。付费生成仍由画布上的生成确认提交。
+
+## 会拒绝的情况
+
+| 条件 | `reason` |
+| --- | --- |
+| 节点不是导演台，或导演台被用来确认图片/视频 | `generation_kind_mismatch` |
+| `modelKey` 不是 `local::director-clay-preview` | `invalid_model` |
+| `charged` 为 true | `director_preview_not_billable` |
+| `source.canvasRevision` 与当前画布不一致 | `canvas_revision_conflict` |
+| `source.canvasId` 与 `canvasId` 不一致 | `canvas_mismatch` |
+| 操作编号不是 `confirm:<proposalId>` | `effect_identity_mismatch` |
+
+## 桌面手工核对
+
+1. 打开 BeefTV，进入要导出的画布，并保持这个窗口在前台。导演台可以先关着。
+2. 用上面的两条命令对一个导演节点做 `export_preview`，再 `generation.confirm`。
+3. 不点击「导出白膜」。桌面应自己打开导演台并开始白膜录制，完成后画布上出现白膜视频节点。
+4. 对视频节点用 `kind: "director_preview"` 确认，应返回 `generation_kind_mismatch`，且不开始录制。
+5. 桌面已经完成后，用同一个 `--operation-id` 再确认一次，不应开始第二段录制。

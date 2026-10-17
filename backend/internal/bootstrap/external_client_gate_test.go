@@ -138,6 +138,24 @@ func TestOpsGateAcceptsRegisteredClientWithoutLaunchToken(t *testing.T) {
 	}
 }
 
+// 白膜确认与视频确认一样走已登记客户端，不要求桌面启动令牌。
+func TestDirectorPreviewConfirmDoesNotRequireLaunchToken(t *testing.T) {
+	harness := newDesktopHarness(t)
+	registration, token, err := agentops.NewClientRegistry(harness.dataDir).RegisterKind("codex", "xiao-ying", agentops.ClientReadWrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ path, body string }{
+		{"/ops/director.shot.export_preview", `{"params":{"canvasId":"missing","nodeIds":["dir-1"]}}`},
+		{"/ops/canvas.generation.confirm", `{"opId":"confirm:gp-1","params":{"proposalId":"gp-1","canvasId":"missing","nodeIds":["dir-1"],"kind":"director_preview","modelKey":"local::director-clay-preview","charged":false,"source":{"canvasId":"missing","canvasRevision":1}}}`},
+	} {
+		recorder := harness.call(requestOptions{method: "POST", path: item.path, body: item.body, clientID: registration.ID, clientToken: token})
+		if _, reason := decodeEnvelope(t, recorder); reason == "desktop_token_required" {
+			t.Fatalf("%s 被桌面令牌拦住：%d %s", item.path, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
 // 伪造或不存在的凭据不能换来豁免：守卫回落到启动令牌，结果是 403。
 func TestOpsGateRejectsBogusClientCredentials(t *testing.T) {
 	harness := newDesktopHarness(t)

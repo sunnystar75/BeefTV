@@ -104,13 +104,14 @@ export async function prepareAssistantProposalSnapshot(
     options: PrepareAssistantProposalOptions = {},
 ): Promise<ConfirmedGenerationInputs> {
     const expected = proposal.source;
+    const modelConfigRevision = expected?.modelConfigRevision;
     if (!expected || !expected.canvasId || !Number.isSafeInteger(expected.canvasRevision) || expected.canvasRevision < 0 ||
-        !Number.isSafeInteger(expected.modelConfigRevision) || expected.modelConfigRevision < 0) {
+        modelConfigRevision === undefined || !Number.isSafeInteger(modelConfigRevision) || modelConfigRevision < 0) {
         throw new AssistantProposalBlockedError("invalid_source");
     }
     const checkRevisions = (state: SourceRevisions) => {
         if (state.canvasId !== expected.canvasId || state.canvasRevision !== expected.canvasRevision) throw new AssistantProposalBlockedError("canvas_changed");
-        if (state.modelConfigRevision !== expected.modelConfigRevision) throw new AssistantProposalBlockedError("settings_changed");
+        if (state.modelConfigRevision !== modelConfigRevision) throw new AssistantProposalBlockedError("settings_changed");
     };
     const snapshot = await readSettledCurrent(readCurrent, options);
     checkRevisions(snapshot);

@@ -108,6 +108,8 @@ import { useCanvasConnectionController } from "./use-canvas-connection-controlle
 import { useCanvasActiveTasks } from "./use-canvas-active-tasks";
 import { useCanvasStyleWorkflow } from "./use-canvas-style-workflow";
 import { useCanvasDirector } from "./use-canvas-director";
+import { runDirectorPreviewNodes } from "./director-preview-runner";
+import { useDirectorPreviewDispatch } from "./use-director-preview-dispatch";
 import { useCanvasHistory } from "./use-canvas-history";
 import { useCanvasKeyboard } from "./use-canvas-keyboard";
 import { useCanvasMediaTools } from "./use-canvas-media-tools";
@@ -1804,6 +1806,20 @@ function InfiniteCanvasPage() {
         setDirectorNodeId,
         updateProject,
     });
+    const clayExportRef = useRef<{ nodeId: string; run: () => Promise<void> } | null>(null);
+    const onExportClayReady = useCallback((nodeId: string, run: (() => Promise<void>) | null) => {
+        if (run) {
+            clayExportRef.current = { nodeId, run };
+            return;
+        }
+        if (clayExportRef.current?.nodeId === nodeId) clayExportRef.current = null;
+    }, []);
+    const runDirectorPreview = useCallback((nodeIds: string[]) => runDirectorPreviewNodes({
+        nodeIds,
+        openDirector: openDirectorWorkbench,
+        exportFor: (nodeId) => (clayExportRef.current?.nodeId === nodeId ? clayExportRef.current.run : null),
+    }), [openDirectorWorkbench]);
+    useDirectorPreviewDispatch(projectId, projectLoaded, runDirectorPreview);
 
     useEffect(() => {
         const starter = searchParams.get("start");
@@ -3305,6 +3321,7 @@ function InfiniteCanvasPage() {
                                 onDeleteImageNode: (nodeId) => deleteNodes(new Set([nodeId])),
                                 onAddCanvasImage: addDirectorReferenceToCanvas,
                                 onFlush: () => flushCanvasStorePersistence(),
+                                onExportClayReady,
                             }}
                             versionCompare={{
                                 open: Boolean(versionCompareRootId),
@@ -3371,7 +3388,15 @@ function InfiniteCanvasPage() {
                         selectedNodeIds={assistantSelectedNodeIds}
                         references={assistantMentionReferences}
                         onLocateNodes={locateAssistantNodes}
-                        onRunProposal={runAssistantProposal}
+                        onRunProposal={(proposal, turnId) => {
+                            if (proposal.kind === "director_preview") {
+                                void runDirectorPreview(proposal.nodeIds).catch((error) => {
+                                    message.error(error instanceof Error ? error.message : "白膜导出没有开始");
+                                });
+                                return;
+                            }
+                            runAssistantProposal(proposal, turnId);
+                        }}
                         onOpenModelSettings={() => navigate("/settings?section=channels")}
                     />
                 ) : null}

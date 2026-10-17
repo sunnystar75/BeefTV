@@ -29,6 +29,8 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 `canvas.generation.propose` 是只读操作，返回的 `source` 包含 `canvasId`、`canvasRevision`、`modelConfigRevision`；模型键与配置版本来自同一次配置读取。提案不创建生成任务。
 
+`director.shot.export_preview` 登记免费本地白膜提议（`kind: director_preview`，`modelKey: local::director-clay-preview`，`charged: false`），不录制、不创建任务。`canvas.generation.confirm` 用操作编号 `confirm:<proposalId>` 确认。图片和视频确认只校验节点与画布版本，不在这里创建付费任务；白膜确认通知已打开该画布的桌面，走和点击「导出白膜」相同的本机录制。调用顺序见 [导演白膜确认](/docs/backend/director-preview-ops)。
+
 首次确认同时核对这两个持久版本、未保存的编辑和确认期间的变化。旧历史中没有 `source` 的提案需要重新提出。通过核对后，生成沿用已有模型解析规则，并使用确认时复制的提示词、节点、连线和全局参数。此版本合同不包含素材库独立更新、hydrate 时解析的动态角色版本或任意远端 URL 的内容字节变化。
 
 | 路由组 | 用途 |

@@ -58,7 +58,7 @@ import type { CanvasNodeData } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
 import type { DirectorCamera, DirectorCameraMove, DirectorHumanoidBone, DirectorKeyframeDeleteTarget, DirectorKeyframeEasing, DirectorLight, DirectorObject, DirectorPose, DirectorQuat, DirectorRenderMode, DirectorRig, DirectorScene, DirectorSceneOutput, DirectorShot, DirectorShotSize, DirectorTransform, DirectorVec3 } from "@/types/director";
 
-export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onAddCanvasImage, onFlush, onShouldCaptureCover, onCaptureCover, generatePanorama = generateDirectorPanorama }: { open: boolean; scene: DirectorScene | null; projectId?: string; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: DirectorScene) => void; onApply: (output: DirectorSceneOutput) => Promise<void | { confirmed?: boolean }>; onDeleteImageNode: (nodeId: string) => void; onAddCanvasImage?: (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal, expectedScope: CapturedUserScope) => void | Promise<void | DirectorCanvasImageHandoff>; onFlush?: () => void | Promise<void>; onShouldCaptureCover?: (scene: DirectorScene, shotId: string) => boolean; onCaptureCover?: (input: { scene: DirectorScene; shotId: string; beauty: Blob }) => Promise<void>; generatePanorama?: typeof generateDirectorPanorama }) {
+export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onAddCanvasImage, onFlush, onShouldCaptureCover, onCaptureCover, generatePanorama = generateDirectorPanorama, nodeId, onExportClayReady }: { open: boolean; scene: DirectorScene | null; projectId?: string; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: DirectorScene) => void; onApply: (output: DirectorSceneOutput) => Promise<void | { confirmed?: boolean }>; onDeleteImageNode: (nodeId: string) => void; onAddCanvasImage?: (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal, expectedScope: CapturedUserScope) => void | Promise<void | DirectorCanvasImageHandoff>; onFlush?: () => void | Promise<void>; onShouldCaptureCover?: (scene: DirectorScene, shotId: string) => boolean; onCaptureCover?: (input: { scene: DirectorScene; shotId: string; beauty: Blob }) => Promise<void>; generatePanorama?: typeof generateDirectorPanorama; nodeId?: string; onExportClayReady?: (nodeId: string, run: (() => Promise<void>) | null) => void }) {
     const { message, modal } = App.useApp();
     const theme = canvasThemes[useActiveTheme()];
     const effectiveConfig = useEffectiveConfig();
@@ -1543,6 +1543,23 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
             if (session.current()) setRecording(false);
         }
     };
+
+    // 注册必须留在提前返回之前。CLI 确认和面板按钮都调用最新的 exportClayVideo。
+    const exportClayVideoRef = useRef(exportClayVideo);
+    exportClayVideoRef.current = exportClayVideo;
+    useEffect(() => {
+        if (!onExportClayReady || !nodeId) return undefined;
+        if (!open || !draft || !activeShot) {
+            onExportClayReady(nodeId, null);
+            return undefined;
+        }
+        const id = nodeId;
+        onExportClayReady(id, async () => {
+            if (!viewportRef.current) throw new Error("导演台还没准备好，白膜导出没有开始");
+            await exportClayVideoRef.current();
+        });
+        return () => onExportClayReady(id, null);
+    }, [activeShot, draft, nodeId, onExportClayReady, open]);
 
     if (!open || !draft || !activeShot) return null;
 

@@ -161,6 +161,7 @@ export type CanvasProjectEditorDialogsProps = {
         onDeleteImageNode: (nodeId: string) => void;
         onAddCanvasImage: (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal, expectedScope: CapturedUserScope) => Promise<{ assetId?: string; persisted?: boolean } | void>;
         onFlush: () => void | Promise<void>;
+        onExportClayReady?: (nodeId: string, run: (() => Promise<void>) | null) => void;
     };
     versionCompare: {
         open: boolean;
@@ -326,6 +327,8 @@ export function CanvasProjectEditorDialogs({
                         onAddCanvasImage={director.onAddCanvasImage}
                         onFlush={director.onFlush}
                         onboardingScope={director.onboardingScope}
+                        nodeId={director.nodeId}
+                        onExportClayReady={director.onExportClayReady}
                     />
                 </Suspense>
             ) : null}

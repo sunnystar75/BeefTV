@@ -99,7 +99,7 @@ export function useCanvasDirector({
 
     const openDirectorWorkbench = useCallback((nodeId: string) => {
         const node = nodesRef.current.find((item) => item.id === nodeId);
-        if (!node || node.metadata?.workflowKind !== "shot") return;
+        if (!node || node.metadata?.workflowKind !== "shot") return false;
         let scene = currentDirectorScenes(projectId, directorScenes).find((item) => item.id === node.metadata?.directorSceneId);
         let sceneNeedsPersistence = false;
         if (!scene) {
@@ -115,6 +115,7 @@ export function useCanvasDirector({
         }
         if (sceneNeedsPersistence) updateProject(projectId, { directorScenes: upsertDirectorSceneById(currentDirectorScenes(projectId, directorScenes), scene) });
         setDirectorNodeId(nodeId);
+        return true;
     }, [directorScenes, nodesRef, projectId, setDirectorNodeId, setNodes, updateProject]);
 
     /** 每次保存都基于 store 中最新 directorScenes upsert，避免旧闭包数组覆盖并发保存。 */

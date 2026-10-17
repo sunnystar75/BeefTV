@@ -72,6 +72,16 @@ describe("撤销后的生成建议不再可用", () => {
         expect(labels).toContain("生成");
         expect(labels).toContain("先不用");
     });
+    test("白膜提议提供导出，不走付费生成按钮", () => {
+        const html = render({
+            ...proposalTurn,
+            proposals: [{ proposalId: "clay-1", kind: "director_preview", nodeIds: ["dir-1"], model: "导演白膜", modelKey: "local::director-clay-preview", charged: false }],
+        });
+        const labels = buttons(html);
+        expect(labels).toContain("导出白膜");
+        expect(labels).not.toContain("生成");
+        expect(html).toContain("不另计模型费用");
+    });
     test("撤销后未开始的建议只说明不会生成，没有按钮", () => {
         const html = render(proposalTurn, { undone: true });
         expect(html).toContain("这一轮已撤销，不会生成。");

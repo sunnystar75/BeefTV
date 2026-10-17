@@ -107,12 +107,18 @@ export function collectTurnEffects(turn, opID, result, operationId) {
       if (result.created && result.edgeId) turn.createdEdgeIds.push(String(result.edgeId));
       break;
     case 'canvas.generation.propose':
+    case 'director.shot.export_preview':
       if (result.proposalId) {
+        const source = result.source && typeof result.source === 'object' ? {
+          canvasId: result.source.canvasId,
+          canvasRevision: result.source.canvasRevision,
+          ...(result.source.modelConfigRevision === undefined ? {} : { modelConfigRevision: result.source.modelConfigRevision }),
+        } : undefined;
         turn.proposals.push({ proposalId: String(result.proposalId), kind: String(result.kind || ''),
           nodeIds: asStringList(result.nodeIds), model: String(result.model || ''),
           modelKey: String(result.modelKey || ''), note: String(result.note || ''),
-          ...(result.source ? { source: { canvasId: result.source.canvasId,
-            canvasRevision: result.source.canvasRevision, modelConfigRevision: result.source.modelConfigRevision } } : {}) });
+          ...(typeof result.charged === 'boolean' ? { charged: result.charged } : {}),
+          ...(source ? { source } : {}) });
       }
       break;
     default:
