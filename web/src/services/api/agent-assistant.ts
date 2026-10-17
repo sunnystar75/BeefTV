@@ -151,6 +151,8 @@ export function agentAssistantFailureText(reason: string | undefined, fallback =
             return "本次消息内容过大，请缩短消息或减少附件后重试。";
         case "turn_timeout":
             return "模型响应时间过长，这一轮尚未完成。已完成的改动会保留，可以继续处理。";
+        case "tool_timeout":
+            return "某个操作超时，这一轮已停止。已完成的改动会保留，可以继续处理。";
         case "turn_interrupted":
             return "上一轮执行中断，已经落地的改动已保留。请查看画布和改动记录后再继续。";
         case "turn_request_budget_exhausted":

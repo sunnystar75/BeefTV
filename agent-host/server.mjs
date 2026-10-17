@@ -102,9 +102,10 @@ globalThis.fetch = async (input, options = {}) => {
   let parsed = null;
   try { parsed = new URL(raw); } catch { parsed = null; }
   const isModelCall = !!BASE_ORIGIN && parsed && parsed.origin === BASE_ORIGIN;
+  let budget;
   if (isModelCall) {
     // Transform at the real dispatch boundary; extension errors are caught by pi.
-    const budget = turnBudgetContext.getStore();
+    budget = turnBudgetContext.getStore();
     let historicalKind='素材';
     try {
     if (options.body) {
@@ -154,7 +155,10 @@ globalThis.fetch = async (input, options = {}) => {
     outbound.push(entry);
     fs.appendFileSync(ledgerPath, JSON.stringify(entry) + '\n');
   }
-  return isModelCall ? fetchModelWithProgressIdle(input, options, {fetch: realFetch}) : realFetch(input, options);
+  if (isModelCall && budget?.generation) budget.generation.lastModelActivity = Date.now();
+  return isModelCall ? fetchModelWithProgressIdle(input, options, {fetch: realFetch, onActivity() {
+    if (budget?.generation) budget.generation.lastModelActivity = Date.now();
+  }}) : realFetch(input, options);
 };
 
 const ops = createOperationBridge({
