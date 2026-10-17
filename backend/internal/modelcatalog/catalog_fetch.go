@@ -103,6 +103,7 @@ func LoadChannelModelCatalog(ctx context.Context, fetcher CatalogFetcher, baseUR
 	if err != nil {
 		return nil, err
 	}
+	catalog = AnnotateNativeDeepSeekCatalog(baseURL, catalog)
 	catalog = OverlayCatalogVideoCapabilities(catalog)
 	if extras != nil {
 		catalog = MergeCatalogExtras(catalog, extras(baseURL, apiFormat, headers))

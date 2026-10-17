@@ -1,4 +1,5 @@
 import { sanitizeChannelModelCatalogItem, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
+import { annotateNativeDeepSeekCatalogItem } from "@/lib/deepseek-native";
 import { captureUserScope, isUserScopeAbandonedError, UserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { getBeefAPIConnectionEpoch } from "@/services/api/beefapi-connection";
 import { createChannelTransport } from "@/services/api/channel-transport";
@@ -74,11 +75,11 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
     }
     if (!viaBackend) {
         if (channel.apiFormat !== "gemini") {
-            const catalog = await fetchOpenAIModelCatalog(channel);
+            const catalog = (await fetchOpenAIModelCatalog(channel)).map((item) => annotateNativeDeepSeekCatalogItem(channel, item));
             return { models: catalog.map((item) => item.id).sort((a, b) => a.localeCompare(b)), catalog };
         }
         const models = await fetchImageModels(channel);
-        return { models, catalog: models.map((id) => ({ id })) };
+        return { models, catalog: models.map((id) => annotateNativeDeepSeekCatalogItem(channel, { id })) };
     }
     try {
         // 登录态由同源后端代取模型目录，避免每个 OpenAI 兼容服务分别维护浏览器 CORS 白名单。
@@ -93,8 +94,9 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
         if (managed && connectionEpoch !== getBeefAPIConnectionEpoch()) throw new UserScopeAbandonedError();
         const catalog = new Map<string, ChannelModelCatalogItem>();
         for (const item of result.models || []) {
-            const entry = typeof item === "string" ? sanitizeChannelModelCatalogItem({ id: item }) : sanitizeChannelModelCatalogItem(item);
-            if (!entry) continue;
+            const parsed = typeof item === "string" ? sanitizeChannelModelCatalogItem({ id: item }) : sanitizeChannelModelCatalogItem(item);
+            if (!parsed) continue;
+            const entry = annotateNativeDeepSeekCatalogItem(channel, parsed);
             const existing = catalog.get(entry.id);
             catalog.set(entry.id, existing || entry);
         }

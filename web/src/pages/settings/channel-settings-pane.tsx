@@ -7,6 +7,7 @@ import { ChannelHeadersEditor, validateChannelHeaders } from "@/components/chann
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { PageHeader } from "@/components/layout/workspace-page";
 import { mergeFetchedChannelModelProfiles } from "@/lib/channel-model-catalog";
+import { isNativeDeepSeekChannel, NATIVE_DEEPSEEK_FLASH_MODEL } from "@/lib/deepseek-native";
 import { seedancePortraitModel } from "@/lib/seedance-portrait";
 import { ensureModelProfilesWithUiDefaults } from "@/lib/model-protocols";
 import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api/image";
@@ -579,10 +580,12 @@ export function applyFetchedChannelModelCatalog(channel: ModelChannel, result: C
     const profiles = mergeFetchedChannelModelProfiles(channel, result.catalog);
     if (channel.id === "beefapi") return { ...channel, models: uniqueModels(result.models), modelProfiles: profiles };
     const existing = new Map((channel.modelProfiles || []).map((profile) => [profile.model, profile]));
+    const nativeFlash = isNativeDeepSeekChannel(channel) && (result.models.includes(NATIVE_DEEPSEEK_FLASH_MODEL) || result.catalog.some((item) => item.id === NATIVE_DEEPSEEK_FLASH_MODEL));
     // Refresh updates the catalog without silently enabling new models or removing manual ones.
+    // Official DeepSeek is the exception: deepseek-flash is selectable only when /models returned it.
     return {
         ...channel,
-        models: channel.models.length ? channel.models : uniqueModels(result.models),
+        models: channel.models.length ? uniqueModels(nativeFlash ? [...channel.models, NATIVE_DEEPSEEK_FLASH_MODEL] : channel.models) : uniqueModels(result.models),
         modelProfiles: profiles.map((profile) => {
             const previous = existing.get(profile.model);
             if (!previous) return profile;

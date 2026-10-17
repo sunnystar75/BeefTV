@@ -11,6 +11,7 @@ import { normalizeVideoBoolean, normalizeVideoDuration, normalizeVideoResolution
 import { defaultModelCapabilityConfig, upgradeGPTImageCapability, workflowFieldRole, workflowFieldSafeToOverride, workflowVideoFieldsFromJson, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { useUserStore } from "@/stores/use-user-store";
 import type { CapabilitySpec } from "@/services/api/logical-models";
+import { nativeDeepSeekRequestModel } from "@/lib/deepseek-native";
 import { seedancePortraitLabel, seedancePortraitModel, type VideoPriceQuote } from "@/lib/seedance-portrait";
 
 export type ApiCallFormat = "openai" | "gemini" | "claude";
@@ -1093,7 +1094,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
             : (modelProfile?.capability ? defaultProtocolForCapability(modelProfile.capability) : defaultProtocolForModel(model)));
     return {
         ...config,
-        model,
+        model: nativeDeepSeekRequestModel(channel, model),
         baseUrl: channel.baseUrl,
         referenceAssetOrigin: channel.referenceAssetOrigin,
         apiKey: channel.credentialRef ? "" : channel.apiKey,

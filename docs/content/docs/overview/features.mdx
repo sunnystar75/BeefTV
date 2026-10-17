@@ -19,6 +19,8 @@ Windows 安装包自带视频处理工具，无需另外安装 FFmpeg。预览�
 
 每个模型可配置用途、协议与参数。重新读取目录保留已选模型和手动配置；目录里出现模型不等于已验证可生成。模型测试会提示供应商费用，并等待任务完成后显示结果，产物可在任务中心查看。连接或模型设置变化后需要重新测试。
 
+官方 DeepSeek API（`https://api.deepseek.com`，DeepSeek Chat 插件）用模型 ID `deepseek-flash` 提供 DeepSeek-V4.1-Flash。拉取目录时只保留上游 `/models` 实际返回的 ID，不会补写 `deepseek-v4.1-flash`。发往该官方地址的对话请求会把 BeefTV 别名 `deepseek-v4.1-flash`，以及官方仍接受的 `deepseek-v4-flash`、`deepseek-v4-flash-vision-exp`，改写成 `deepseek-flash`。`deepseek-v4-pro` 保持原 ID。内置 BeefAPI 企业目录继续使用 SKU `deepseek-v4.1-flash`。
+
 ## 工作区账号容量
 
 登录后，首页侧栏左下角用户头像上方显示账号文件容量进度：左侧硬盘图标，右侧已用容量与总容量，进度条旁显示剩余容量。用量达到 70% 变为警告色，达到 90% 或已满变为危险色。点击进入素材库；资产页页头仍展示同一用量。收起侧栏时保留图标和细进度条，悬停可看到已用、剩余与总容量。统计包含素材文件和创作会话附件。
