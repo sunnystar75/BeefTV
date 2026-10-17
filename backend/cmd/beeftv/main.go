@@ -406,6 +406,16 @@ BEEFTV_DATA_DIR 可以指向非默认数据目录。Windows 从用户目录下 .
 
 写操作必须带幂等键（CLI 的 --op-id，MCP 工具参数里的 operationId）：重试同一操作要复用同一个值。
 
+canvas.document.commit 是整份画布 CAS 覆盖，不是局部 upsert。document.nodes 里有什么，画布节点就变成什么；
+未出现的顶层字段会保留，但出现的 nodes 会整表替换。绑定、改标题、改提示词、挪动和删节点请用
+canvas.nodes.create、canvas.node.update、canvas.node.configure、canvas.node.move、canvas.node.delete 和 canvas.edge.*。
+已登记外部客户端，以及只带 owner 凭据的 CLI，如果提交会删掉已有节点，服务端默认拒绝
+（HTTP 412，reason=full_document_replace_required）。确要整布替换时，在 params 顶层加
+"allowFullDocumentReplace": true（与 document 同级，写进 document 正文无效）。
+PUT /canvas-projects/:id 同样是整份正文替换；外部调用要删节点时，把同一个字段放在 project 同级。
+2026-10-17 的事故就是把只含 1 个节点的 document.nodes 当成补丁提交，画布从 149 个节点变成 1 个。
+桌面编辑器的正常保存不需要这个标志。不要用 document.commit 顺手改 viewport。
+
 环境变量：BEEFTV_BASE_URL、BEEFTV_DATA_DIR、BEEFTV_CLIENT_ID、BEEFTV_CLIENT_TOKEN、
 BEEFTV_OWNER_TOKEN（owner 可信通道）、BEEFTV_DESKTOP_TOKEN（桌面自身调用）
 退出码：0 成功；2 用法；3 未找到；4 冲突；5 前置条件；6 只读/未授权；7 不支持；8 参数；9 连接失败；1 内部

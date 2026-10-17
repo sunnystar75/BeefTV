@@ -27,6 +27,10 @@ type Caller struct {
 	Kind     CallerKind
 	ReadOnly bool
 	Scope    Authorizer
+	// GuardFullDocumentReplace 要求整份画布替换在删节点前显式确认。
+	// 已登记外部客户端总是如此；owner 凭据的 CLI 也如此。桌面编辑器不带这个标记，
+	// 用户删节点后的正常保存仍然直接提交整份文档。
+	GuardFullDocumentReplace bool
 }
 
 func ManualCaller(readOnly bool) Caller {
@@ -38,7 +42,12 @@ func AssistantCaller(scope Authorizer, readOnly bool) Caller {
 }
 
 func ExternalCaller(readOnly bool) Caller {
-	return Caller{Kind: CallerExternal, ReadOnly: readOnly}
+	return Caller{Kind: CallerExternal, ReadOnly: readOnly, GuardFullDocumentReplace: true}
+}
+
+func (c Caller) guardsFullDocumentReplace() bool {
+	resolved := c.resolved()
+	return resolved.Kind == CallerExternal || resolved.GuardFullDocumentReplace
 }
 
 func (c Caller) resolved() Caller {

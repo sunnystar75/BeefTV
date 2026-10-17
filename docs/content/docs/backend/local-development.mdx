@@ -121,6 +121,7 @@ curl -s -X POST http://127.0.0.1:8082/inference \
 两条边界：
 
 - 已登记的外部客户端只需自身凭据，即可访问同一个桌面工作区的 `/api/ops` 和 `/api/ops/:op`。它不能访问其他桌面 API、登记客户端或签发 UI 写会话。不要向外部 Agent 分发 owner 或桌面壳凭据。
+- `canvas.document.commit` 是整份画布覆盖。外部客户端和 owner 凭据 CLI 若让 `nodes` 变少，必须在参数顶层传 `allowFullDocumentReplace: true`，否则返回 `full_document_replace_required`。绑定和局部修改用 `canvas.node.*`。桌面编辑器保存不受这道限制。详见 [HTTP API](/docs/backend/http-api)。
 - 内置 UI 通过 Wails 绑定获得独立的短期引导凭据，再签发 UI 会话；单独出示桌面启动令牌不能取得助手写会话。
 - 客户端登记（`beeftv client register`）按合同需要 owner 凭据；桌面形态下同时需要桌面启动令牌。令牌值只在本机进程环境与本机 0600 文件里流转，不写入日志、不写进文档示例。
 

@@ -2,6 +2,7 @@ package operations_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/agentops"
@@ -131,4 +132,129 @@ func TestDocumentCommitRequiresExpectedRevision(t *testing.T) {
 	if got := opErr(t, err); got.Code != operations.CodeInvalidArgument {
 		t.Fatalf("缺少 expectedRevision 应被拒: %v", err)
 	}
+}
+
+func TestExternalPartialDocumentCommitRejectedUntilExplicitReplace(t *testing.T) {
+	h := newHarness(t)
+	before := h.revisionNow(t)
+	partial := map[string]any{
+		"nodes": []any{map[string]any{"id": "n2", "type": "director", "title": "只提交一个节点"}},
+	}
+	_, err := h.execute(t, operations.ExternalCaller(false), "canvas.document.commit", "doc-bind-partial", map[string]any{
+		"canvasId": h.canvasID, "expectedRevision": before, "document": partial,
+	})
+	got := opErr(t, err)
+	if got.Code != operations.CodePreconditionFailed || got.Reason != "full_document_replace_required" {
+		t.Fatalf("单节点提交必须拒绝: %v", err)
+	}
+	if got.Message == "" || !containsAll(got.Message, "CAS 覆盖", "allowFullDocumentReplace") {
+		t.Fatalf("拒绝文案必须说明整份覆盖: %s", got.Message)
+	}
+	if got.Details["currentNodeCount"] != float64(2) && got.Details["currentNodeCount"] != 2 {
+		t.Fatalf("details = %#v", got.Details)
+	}
+	if h.revisionNow(t) != before || nodeCount(t, h) != 2 {
+		t.Fatal("被拒绝的提交不得改画布")
+	}
+	_, err = h.execute(t, operations.ExternalCaller(false), "canvas.document.commit", "doc-bind-flag-inside", map[string]any{
+		"canvasId": h.canvasID, "expectedRevision": before,
+		"document": map[string]any{"allowFullDocumentReplace": true, "nodes": partial["nodes"]},
+	})
+	if opErr(t, err).Reason != "full_document_replace_required" {
+		t.Fatalf("写进 document 正文的标志不得放行: %v", err)
+	}
+
+	renamed, err := h.execute(t, operations.ExternalCaller(false), "canvas.node.update", "rename-after-reject", map[string]any{
+		"canvasId": h.canvasID, "nodeId": "n1", "expectedRevision": h.revisionNow(t),
+		"patch": map[string]any{"title": "细粒度仍可用"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := h.execute(t, operations.ExternalCaller(false), "canvas.nodes.create", "create-after-reject", map[string]any{
+		"canvasId": h.canvasID, "expectedRevision": renamed.Revision,
+		"nodes": []any{map[string]any{"title": "新节点", "type": "text"}},
+	})
+	if err != nil || nodeCount(t, h) != 3 {
+		t.Fatalf("细粒度创建应成功: %v count=%d", err, nodeCount(t, h))
+	}
+
+	full := storedDocument(t, h)
+	full["title"] = "整表但保留节点"
+	if _, err := h.execute(t, operations.ExternalCaller(false), "canvas.document.commit", "full-keep", map[string]any{
+		"canvasId": h.canvasID, "expectedRevision": created.Revision, "document": full,
+	}); err != nil {
+		t.Fatalf("保留全部节点 ID 的外部提交应成功: %v", err)
+	}
+	if nodeCount(t, h) != 3 {
+		t.Fatalf("保留提交后节点数 = %d", nodeCount(t, h))
+	}
+
+	replaced, err := h.execute(t, operations.ExternalCaller(false), "canvas.document.commit", "explicit-wipe", map[string]any{
+		"canvasId": h.canvasID, "expectedRevision": h.revisionNow(t), "allowFullDocumentReplace": true,
+		"document": partial,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nodeCount(t, h) != 1 || replaced.Revision == created.Revision {
+		t.Fatalf("显式整布替换应留下 1 个节点: rev=%d count=%d", replaced.Revision, nodeCount(t, h))
+	}
+	if _, err := h.execute(t, operations.ExternalCaller(false), "canvas.document.commit", "stale-flag", map[string]any{
+		"canvasId": h.canvasID, "expectedRevision": before, "allowFullDocumentReplace": true,
+		"document": partial,
+	}); opErr(t, err).Code != operations.CodeConflict {
+		t.Fatalf("标志不得绕过 CAS: %v", err)
+	}
+}
+
+func TestManualDocumentCommitCanShrinkWithoutFlag(t *testing.T) {
+	h := newHarness(t)
+	_, err := h.execute(t, operations.ManualCaller(false), "canvas.document.commit", "manual-shrink", map[string]any{
+		"canvasId": h.canvasID, "expectedRevision": h.revisionNow(t),
+		"document": map[string]any{"nodes": []any{map[string]any{"id": "n1", "type": "image", "title": "编辑器删除后的整页"}}},
+	})
+	if err != nil || nodeCount(t, h) != 1 {
+		t.Fatalf("桌面手工保存应能删节点: %v count=%d", err, nodeCount(t, h))
+	}
+}
+
+func TestOwnerTokenStyleCommitRequiresReplaceFlag(t *testing.T) {
+	h := newHarness(t)
+	ownerCLI := operations.Caller{Kind: operations.CallerManual, GuardFullDocumentReplace: true}
+	_, err := h.execute(t, ownerCLI, "canvas.document.commit", "owner-partial", map[string]any{
+		"canvasId": h.canvasID, "expectedRevision": h.revisionNow(t),
+		"document": map[string]any{"nodes": []any{map[string]any{"id": "n1", "type": "text", "title": "owner cli"}}},
+	})
+	if opErr(t, err).Reason != "full_document_replace_required" || nodeCount(t, h) != 2 {
+		t.Fatalf("owner CLI 残缺提交必须拒绝: %v", err)
+	}
+}
+
+func storedDocument(t *testing.T, h *harness) map[string]any {
+	t.Helper()
+	raw, err := h.service.UserCanvasProject(h.userID, h.canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored map[string]any
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatal(err)
+	}
+	return stored
+}
+
+func nodeCount(t *testing.T, h *harness) int {
+	t.Helper()
+	nodes, _ := storedDocument(t, h)["nodes"].([]any)
+	return len(nodes)
+}
+
+func containsAll(value string, parts ...string) bool {
+	for _, part := range parts {
+		if !strings.Contains(value, part) {
+			return false
+		}
+	}
+	return true
 }

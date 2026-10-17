@@ -21,4 +21,6 @@ description: 通过 MCP 或 CLI 追加、修改和删除画布分镜行
 
 分镜行时长为 1–60 秒；省略时默认 6 秒。行命令与手工界面的 `canvas.document.commit` 在后端共用时长、提示词模板失效和删除行连线检查。整文档提交若漏清旧模板、已删除行的连线或未重排镜号会拒绝保存，避免回执确认的内容与提交文档不一致。
 
+`canvas.document.commit` 本身是整份画布 CAS 覆盖。外部 CLI 不要用它绑定或局部更新节点；`document.nodes` 只含部分节点时会替换整张画布。这类残缺提交默认返回 `full_document_replace_required`，除非顶层显式传入 `allowFullDocumentReplace: true`。分镜行请继续使用上面的行级操作。
+
 `/api/ops` 描述中的 `assistantModes` 和 `replay` 由 Go 操作注册定义生成，官方 Pi 宿主直接使用；缺少分类的工具默认不暴露、不可安全重放。分类只负责发现与重放声明，资源归属、当前画布限制、CAS 和幂等仍由后端执行层校验。外部 MCP/CLI 和手工调用继续使用同一操作入口。
