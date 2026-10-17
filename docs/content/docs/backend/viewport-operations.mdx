@@ -23,7 +23,7 @@ beeftv ops call canvas.viewport.fit --op-id fit-scene-01 --params '{
 }'
 ```
 
-`viewportSize` 是适应计算用的窗口尺寸，单位是 CSS 像素。省略 `nodeIds`、`bbox` 和 `viewport` 时，对准当前可见节点。默认内边距 88、最大缩放 1、最小缩放 0.05，与界面「适应画布」相同。收起的批量子节点和折叠画框里的子节点不参与包围盒。
+`viewportSize` 是适应计算用的窗口尺寸，单位是 CSS 像素。省略 `nodeIds`、`bbox` 和 `viewport` 时，对准当前可见节点。默认内边距 88、最小缩放 0.05。全部节点和包围盒的最大缩放默认 1，与界面「适应画布」相同；指定节点的最大缩放默认 1.25，与界面「适应选区」相同。调用方可以用 `maxScale` 覆盖。收起的批量子节点和折叠画框里的子节点不参与包围盒。缺宽高的节点按 320×220 计入包围盒。
 
 对准指定节点：
 
@@ -55,7 +55,11 @@ beeftv ops call canvas.viewport.fit --op-id set-viewport-01 --params '{
 
 `viewport`、`nodeIds`、`bbox` 三者只能出现一个。`k` 必须在 0.05 到 8 之间。`expectedRevision` 必须是 `canvas.get` 读到的当前版本；过期版本会被拒绝，节点保持原样。
 
-回执包含 `canvasId`、`revision`、`viewport`、`viewportSeq` 和 `target`（`all`、`nodes`、`bbox` 或 `exact`）。适应模式还会返回 `bounds`；`all` 和 `nodes` 还会返回 `fittedNodeCount`。回执里没有节点数组。
+回执包含 `canvasId`、`revision`、`viewport`、`viewportSeq`、`target`（`all`、`nodes`、`bbox` 或 `exact`）和 `checkpoint`。适应模式还会返回 `bounds`；`all` 和 `nodes` 还会返回 `fittedNodeCount`。回执里没有节点数组。
+
+`checkpoint` 是写入前的相机：`revision`、`viewport`、`viewportSeq`。调用前的 `canvas.get` 加上这份回执就是检查点。要回到原来的视角，用回执里的新 `revision` 再调一次精确设视角，把 `viewport` 设成 `checkpoint.viewport`。这仍然只改相机。失败的写入和操作回执在同一个事务里，回滚后文档与写入前一致，节点字节不会留下半次修改。
+
+历史恢复不会把相机拉回去：恢复走普通文档保存，保留当前 `viewport`。不要用 `canvas.document.commit`，也不要靠历史快照来回滚视角。
 
 ## 保存与重新打开
 
@@ -63,4 +67,4 @@ beeftv ops call canvas.viewport.fit --op-id set-viewport-01 --params '{
 
 界面缩放或拖动时，本地相机仍按原来的方式记在画布状态里。`viewportSeq` 没有前进时，外部节点写入不会把用户正在看的位置拉走。`canvas.viewport.fit` 成功后序号前进，已打开的画布在下一次外部刷新里采用新相机；重新打开或重启后读到的也是这次写入的视角。
 
-撤销一轮节点修改时，已写入的视角留在原地。视角不是文档内容，不会随节点撤销被拉回 `{x:0,y:0,k:1}`，也不会借撤销去改 `nodes`。
+撤销一轮节点修改时，已写入的视角留在原地。视角不是文档内容，不会随节点撤销被拉回 `{x:0,y:0,k:1}`，也不会借撤销去改 `nodes`。只改视角不产生内容快照；可回滚的是回执里的 `checkpoint`，不是一份新的历史版本。

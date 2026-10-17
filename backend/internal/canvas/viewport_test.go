@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/kernel"
+	"infinite-canvas/backend/internal/repository"
 )
 
 func TestSetUserCanvasViewportFitsVisibleNodesWithoutRewritingThem(t *testing.T) {
@@ -124,8 +125,11 @@ func TestSetUserCanvasViewportExactNodesAndBBox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if selected.Target != "nodes" || selected.FittedNodeCount != 1 || selected.Bounds.Left != 1000 {
+	if selected.Target != "nodes" || selected.FittedNodeCount != 1 || selected.Bounds.Left != 1000 || selected.Viewport.K != 1.25 {
 		t.Fatalf("selected=%+v bounds=%+v", selected, selected.Bounds)
+	}
+	if selected.Checkpoint.Revision != created.Revision || selected.Checkpoint.Viewport != (Viewport{X: 0, Y: 0, K: 1}) || selected.Checkpoint.ViewportSeq != 0 {
+		t.Fatalf("checkpoint=%+v", selected.Checkpoint)
 	}
 	exact, err := svc.SetUserCanvasViewport("owner", "canvas", selected.Summary.Revision, ViewportCommand{
 		Viewport: &Viewport{X: 12, Y: -4, K: 0.5},
@@ -153,8 +157,58 @@ func TestSetUserCanvasViewportExactNodesAndBBox(t *testing.T) {
 		t.Fatal("过小缩放被接受")
 	}
 	var appErr *kernel.AppError
+	staleBefore, err := svc.UserCanvasProject("owner", "canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := svc.SetUserCanvasViewport("owner", "canvas", 1, ViewportCommand{Viewport: &Viewport{X: 1, Y: 1, K: 1}}); !errors.As(err, &appErr) || appErr.Status != http.StatusConflict {
 		t.Fatalf("过期 revision=%v", err)
+	}
+	staleAfter, err := svc.UserCanvasProject("owner", "canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(staleAfter) != string(staleBefore) {
+		t.Fatal("过期写入改动了文档")
+	}
+}
+
+func TestViewportWriteRollsBackWithTheTransaction(t *testing.T) {
+	svc := newCanvasHistoryTestService(t)
+	created, err := svc.UpsertUserCanvasProject("owner", json.RawMessage(`{
+		"id":"canvas","revision":0,"title":"回滚",
+		"nodes":[{"id":"far","type":"video","title":"远处","position":{"x":-1500,"y":5800},"width":200,"height":100,"metadata":{"prompt":"keep"}}],
+		"connections":[{"id":"e1","fromNodeId":"far","toNodeId":"far"}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := svc.UserCanvasProject("owner", "canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = svc.repo.Transaction(func(tx *repository.Repository) error {
+		bound := svc.WithRepository(tx)
+		fitted, fitErr := bound.SetUserCanvasViewport("owner", "canvas", created.Revision, ViewportCommand{
+			Viewport: &Viewport{X: -20, Y: -900, K: 0.12},
+		})
+		if fitErr != nil {
+			return fitErr
+		}
+		if fitted.Checkpoint.Viewport.K != 1 || fitted.Summary.Revision != created.Revision+1 {
+			return errors.New("checkpoint missing")
+		}
+		return errors.New("checkpoint rollback")
+	})
+	if err == nil || err.Error() != "checkpoint rollback" {
+		t.Fatal(err)
+	}
+	after, err := svc.UserCanvasProject("owner", "canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("事务回滚后文档变了\nbefore=%s\nafter=%s", before, after)
 	}
 }
 

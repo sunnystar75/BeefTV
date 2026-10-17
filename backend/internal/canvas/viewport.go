@@ -13,14 +13,15 @@ import (
 )
 
 const (
-	minViewportScale   = 0.05
-	maxViewportScale   = 8
-	defaultNodeWidth   = 320.0
-	defaultNodeHeight  = 220.0
-	defaultFitPadding  = 88.0
-	defaultFitMaxScale = 1.0
-	maxViewportCoord   = 1e7
-	maxFitNodeIDs      = 200
+	minViewportScale            = 0.05
+	maxViewportScale            = 8
+	defaultNodeWidth            = 320.0
+	defaultNodeHeight           = 220.0
+	defaultFitPadding           = 88.0
+	defaultFitMaxScale          = 1.0
+	defaultFitSelectionMaxScale = 1.25
+	maxViewportCoord            = 1e7
+	maxFitNodeIDs               = 200
 )
 
 // Viewport 是画布相机。x/y 是屏幕平移，k 是缩放，与界面 ViewportTransform 一致。
@@ -55,6 +56,13 @@ type ViewportCommand struct {
 	MaxScale *float64
 }
 
+// ViewportCheckpoint 是写入前的相机。回滚时用它再调一次精确设视角，不要用 document.commit，也不要靠历史恢复。
+type ViewportCheckpoint struct {
+	Revision    int64
+	Viewport    Viewport
+	ViewportSeq int64
+}
+
 // ViewportResult 是视口写入的回执。它不包含节点图。
 type ViewportResult struct {
 	Summary         UserDataSummary
@@ -63,6 +71,7 @@ type ViewportResult struct {
 	Target          string
 	FittedNodeCount int
 	Bounds          *CanvasBounds
+	Checkpoint      ViewportCheckpoint
 }
 
 type resolvedViewport struct {
@@ -102,7 +111,12 @@ func (s *Service) SetUserCanvasViewport(userID, canvasID string, expectedRevisio
 	if err != nil {
 		return ViewportResult{}, err
 	}
-	seq := storedViewportSeq(payload) + 1
+	checkpoint := ViewportCheckpoint{
+		Revision:    expectedRevision,
+		Viewport:    storedViewport(payload),
+		ViewportSeq: storedViewportSeq(payload),
+	}
+	seq := checkpoint.ViewportSeq + 1
 	if seq <= 0 {
 		return ViewportResult{}, kernel.BadAuthRequest("视口序号已用尽")
 	}
@@ -137,12 +151,30 @@ func (s *Service) SetUserCanvasViewport(userID, canvasID string, expectedRevisio
 	result := ViewportResult{
 		Summary: summary, Viewport: fitted.Viewport, Seq: seq,
 		Target: fitted.Target, FittedNodeCount: fitted.Count,
+		Checkpoint: checkpoint,
 	}
 	if fitted.HasBounds {
 		bounds := fitted.Bounds
 		result.Bounds = &bounds
 	}
 	return result, nil
+}
+
+func storedViewport(payload map[string]json.RawMessage) Viewport {
+	fallback := Viewport{X: 0, Y: 0, K: 1}
+	raw := payload["viewport"]
+	if len(bytesTrim(raw)) == 0 || string(raw) == "null" {
+		return fallback
+	}
+	var viewport Viewport
+	if json.Unmarshal(raw, &viewport) != nil || !finiteCoord(viewport.X) || !finiteCoord(viewport.Y) || !finiteScale(viewport.K) {
+		return fallback
+	}
+	return viewport
+}
+
+func bytesTrim(raw json.RawMessage) json.RawMessage {
+	return json.RawMessage(strings.TrimSpace(string(raw)))
 }
 
 func storedViewportSeq(payload map[string]json.RawMessage) int64 {
@@ -187,7 +219,11 @@ func resolveViewportCommand(doc map[string]any, cmd ViewportCommand) (resolvedVi
 	if !validPadding(padding) {
 		return resolvedViewport{}, kernel.NewAppError(http.StatusBadRequest, "padding 必须是非负有限数字")
 	}
+	// 全部节点和包围盒对齐「适应画布」（最大缩放 1）。指定节点对齐「适应选区」（最大缩放 1.25）。
 	maxScale := defaultFitMaxScale
+	if cmd.NodeIDs != nil {
+		maxScale = defaultFitSelectionMaxScale
+	}
 	if cmd.MaxScale != nil {
 		maxScale = *cmd.MaxScale
 	}

@@ -54,7 +54,7 @@ listed := registry.List(operations.ManualCaller(false))
 
 `canvas.document.commit` 是顶层文档覆盖，必须带 `expectedRevision` 与稳定 `operationId`，在回执事务里校验并应用到当前画布。不创建画布，不接受任意数据库补丁语言。未触及的顶层字段、ID、资源引用校验、CAS 与回执原子性保持不变。内置当前画布与只读模式拒绝该操作；完全访问模式允许，但仍校验归属与 CAS，并保存跨画布撤销快照。它忽略 `viewport` 和 `viewportSeq`。禁止用它改视角；对准或设置相机只用 `canvas.viewport.fit`，该操作不改 `nodes`。
 
-`canvas.viewport.fit` 只替换视角并递增 `viewportSeq`。内置当前画布模式可以对准当前画布，只读模式拒绝，完全访问模式允许。用法见 `docs/content/docs/backend/viewport-operations.mdx`。
+`canvas.viewport.fit` 只替换视角并递增 `viewportSeq`。回执带 `checkpoint`（写入前的 revision 与相机）；回滚是再用这个相机做一次精确设视角。失败与操作回执同一事务回滚。内置当前画布模式可以对准当前画布，只读模式拒绝，完全访问模式允许。用法见 `docs/content/docs/backend/viewport-operations.mdx`。
 
 `canvas.generation.propose` 只登记提议，不生成、不扣费；禁止携带 `opId`。确认用的模型是目标节点当前有效的选用：节点显式设置优先于全局默认，并按模型目录校验 kind。只有没有节点模型时使用默认；无法解析显式模型时要求重新选择，不替换为另一个付费模型。一批节点若有效模型不同，操作拒绝，由调用方按模型分开提议。同一批节点解析到不同 `modelConfigRevision` 时按配置已变动拒绝，请再提出一次。客户端仍检查最终执行模型与提议一致；规格兼容解析若需要换模型，则拒绝该提议，不带着旧确认发送。
 

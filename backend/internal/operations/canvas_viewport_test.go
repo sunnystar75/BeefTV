@@ -52,11 +52,29 @@ func TestCanvasViewportFitLeavesNodesAndReplays(t *testing.T) {
 	if after["viewportSeq"] != payload["viewportSeq"] {
 		t.Fatalf("seq stored=%v result=%v", after["viewportSeq"], payload["viewportSeq"])
 	}
+	checkpoint := payload["checkpoint"].(map[string]any)
+	if checkpoint["revision"] != float64(created.Revision) || checkpoint["viewportSeq"] != float64(0) {
+		t.Fatalf("checkpoint=%v", checkpoint)
+	}
+	rolled, err := h.execute(t, operations.ExternalCaller(false), "canvas.viewport.fit", "fit-all-rollback", map[string]any{
+		"canvasId": "far-canvas", "expectedRevision": first.Revision,
+		"viewport": checkpoint["viewport"],
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := readCanvas(t, h, "far-canvas")
+	if !jsonEqual(t, restored["nodes"], before["nodes"]) || !jsonEqual(t, restored["connections"], before["connections"]) || !jsonEqual(t, restored["viewport"], checkpoint["viewport"]) {
+		t.Fatalf("用检查点回滚改动了节点或没有回到原相机: %v", restored["viewport"])
+	}
+	if rolled.Result.(map[string]any)["viewportSeq"] != float64(2) {
+		t.Fatal("回滚没有前进视口序号")
+	}
 	replay, err := h.execute(t, operations.ExternalCaller(false), "canvas.viewport.fit", "fit-all-once", params)
 	if err != nil || !replay.Replayed || replay.Revision != first.Revision {
 		t.Fatalf("replay=%+v err=%v", replay, err)
 	}
-	if readCanvas(t, h, "far-canvas")["viewportSeq"] != after["viewportSeq"] {
+	if readCanvas(t, h, "far-canvas")["viewportSeq"] != restored["viewportSeq"] {
 		t.Fatal("重放再次推进了视口序号")
 	}
 	params["expectedRevision"] = created.Revision
@@ -84,7 +102,7 @@ func TestCanvasViewportFitLeavesNodesAndReplays(t *testing.T) {
 	if committed["title"] != "提交改名" {
 		t.Fatalf("commit 没有改标题: %v", committed["title"])
 	}
-	if !jsonEqual(t, committed["viewport"], after["viewport"]) || committed["viewportSeq"] != after["viewportSeq"] {
+	if !jsonEqual(t, committed["viewport"], restored["viewport"]) || committed["viewportSeq"] != restored["viewportSeq"] {
 		t.Fatalf("document.commit 改动了视口: viewport=%v seq=%v", committed["viewport"], committed["viewportSeq"])
 	}
 	if !jsonEqual(t, committed["nodes"], before["nodes"]) {

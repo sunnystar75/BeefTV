@@ -75,6 +75,11 @@ func opCanvasViewportFit(ctx *Context, params json.RawMessage) (any, error) {
 		"viewport":    map[string]any{"x": fitted.Viewport.X, "y": fitted.Viewport.Y, "k": fitted.Viewport.K},
 		"viewportSeq": fitted.Seq,
 		"target":      fitted.Target,
+		"checkpoint": map[string]any{
+			"revision":    fitted.Checkpoint.Revision,
+			"viewport":    map[string]any{"x": fitted.Checkpoint.Viewport.X, "y": fitted.Checkpoint.Viewport.Y, "k": fitted.Checkpoint.Viewport.K},
+			"viewportSeq": fitted.Checkpoint.ViewportSeq,
+		},
 	}
 	if fitted.Target != "exact" {
 		result["fittedNodeCount"] = fitted.FittedNodeCount
